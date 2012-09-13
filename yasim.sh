@@ -80,6 +80,35 @@ User role and group binding (with valid ns-id, ur-id and ug-id)
 	--urg-btime		user role and group binding begin of use time (optional)
 	--urg-etime		user role and group binding end of use time (optional)
 	--urg-tsn-id		user role and group transaction id to expire (mandatory)
+
+Users (with valid ns-id)
+        --add-usr                add new user
+        --expire-usr             expire existing user
+        --show-all-usr           show all users
+        --show-active-usr        show active users
+        --show-expired-usr       show expired users
+        --usr-id                 user id (mandatory)
+        --usr-name               user name (mandatory)
+        --usr-pass               user password (mandatory)
+        --usr-btime              user begin of use time (optional)
+        --usr-etime              user expire of use time (optional)
+        --usr-tsn-id             user transaction id to expire (mandatory)
+
+User info (with valid ns-id)
+        --add-ui                add new user info
+        --expire-ui             expire existing user info
+        --show-all-ui           show all users
+        --show-active-ui        show active users
+        --show-expired-ui       show expired users
+        --ui-cname              user info first name (optional)
+        --ui-sname              user info last name (optional)
+        --ui-company            user info company (optional)
+        --ui-email              user info email (optional)
+        --ui-phone              user info phone (optional)
+        --ui-desc               user info description (optional)
+        --ui-btime              user info begin of use time (optional)
+        --ui-etime              user info expire of use time (optional)
+        --ui-tsn-id             user info transaction id to expire (mandatory)
 "
 }
 
@@ -337,6 +366,128 @@ show_expired_urg () {
         sqlite3 $sqlite3opts $db_file "$q"
 }
 
+#User funcs
+
+add_usr () {
+
+        check_ns
+        [ "X$usr_id" == "X" ] && exit 1
+        [ "X$usr_name" == "X" ] && exit 1
+        [ "X$usr_pass" == "X" ] && exit 1
+        [ "X$usr_btime" == "X" ] && usr_btime=$(date "+%Y-%m-%d %H:%M:%S")
+        q="insert or rollback into users (usr_id,usr_name,usr_pass,usr_btime,ns_id)"
+        q="$q values ($usr_id,'$usr_name','$usr_pass','$usr_btime',$ns_id);"
+        sqlite3 $sqlite3opts $db_file "$q"
+
+}
+
+expire_usr () {
+
+        [ "X$usr_tsn_id" == "X" ] && exit 1
+        [ "X$usr_etime" == "X" ] && usr_etime=$(date "+%Y-%m-%d %H:%M:%S")
+        q="insert or rollback into usr_exp (id,usr_etime) values ($usr_tsn_id,'$usr_etime');"
+        sqlite3 $sqlite3opts $db_file "$q"
+
+}
+
+show_all_usr () {
+
+        check_ns
+        q="select * from users"
+	q="$q left join user_info on users.usr_id=user_info.usr_id"
+	q="$q where users.ns_id=$ns_id order by users.usr_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_active_usr () {
+
+        check_ns
+        q="select * from users"
+        q="$q left join user_info on users.usr_id=user_info.usr_id"
+        q="$q where users.id not in"
+        q="$q (select id from usr_exp)"
+        q="$q and user_info.id not in"
+        q="$q (select id from ui_exp)"
+        q="$q and users.usr_btime < datetime('now','localtime')"
+        q="$q and users.ns_id=$ns_id"
+        q="$q order by users.usr_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_expired_usr () {
+
+        check_ns
+        q="select * from users"
+        q="$q left join user_info on users.usr_id=user_info.usr_id"
+        q="$q inner join usr_exp on users.id=usr_exp.id"
+        q="$q and usr_exp.usr_etime < datetime('now','localtime')"
+        q="$q and users.ns_id=$ns_id"
+        q="$q order by usr_exp.usr_etime desc"
+	
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+#User info funcs
+
+add_ui () {
+
+        check_ns
+	[ "X$usr_id" == "X" ] && exit 1
+        [ "X$ui_cname" == "X" ] && ui_cname="Anonymous"
+        [ "X$ui_sname" == "X" ] && ui_sname="Anonymous"
+        [ "X$ui_company" == "X" ] && ui_company="Unknown"
+        [ "X$ui_email" == "X" ] && ui_email="Unknown"
+        [ "X$ui_phone" == "X" ] && ui_phone="Unknown"
+        [ "X$ui_desc" == "X" ] && ui_desc="Unknown"
+        [ "X$ui_btime" == "X" ] && ui_btime=$(date "+%Y-%m-%d %H:%M:%S")
+        q="insert or rollback into user_info"
+	q="$q (ui_cname,ui_sname,ui_company,ui_email,"
+	q="$q ui_phone,ui_desc,ui_btime,usr_id,ns_id)"
+        q="$q values ('$ui_cname','$ui_sname','$ui_company','$ui_email',"
+	q="$q '$ui_phone','$ui_desc','$ui_btime',$usr_id,$ns_id);"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+expire_ui () {
+
+        [ "X$ui_tsn_id" == "X" ] && exit 1
+        [ "X$ui_etime" == "X" ] && ui_etime=$(date "+%Y-%m-%d %H:%M:%S")
+        q="insert or rollback into ui_exp (id,ui_etime) values ($ui_tsn_id,'$ui_etime');"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_all_ui () {
+
+        check_ns
+        q="select * from user_info where ns_id=$ns_id order by ui_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_active_ui () {
+
+        check_ns
+        q="select * from user_info"
+        q="$q where id not in"
+        q="$q (select id from ui_exp)"
+        q="$q and ui_btime < datetime('now','localtime')"
+        q="$q and ns_id=$ns_id"
+        q="$q order by ui_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_expired_ui () {
+
+        check_ns
+        q="select user_info.*, ui_exp.ui_etime from user_info, ui_exp"
+        q="$q where user_info.id in"
+        q="$q (select id from ui_exp)"
+        q="$q and ui_exp.ui_etime < datetime('now','localtime')"
+        q="$q and user_info.ns_id=$ns_id"
+        q="$q order by ui_exp.ui_etime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+
 shortopts="h"
 
 #global keys
@@ -357,6 +508,15 @@ longopts="$longopts,ug-id:,ug-name:,ug-desc:,ug-btime:,ug-etime:,ug-tsn-id:"
 #user role and group bind keys
 longopts="$longopts,add-urg,expire-urg,show-all-urg,show-active-urg,show-expired-urg"
 longopts="$longopts,urg-id:,urg-btime:,urg-etime:,urg-tsn-id:"
+
+#user keys
+longopts="$longopts,add-usr,expire-usr,show-all-usr,show-active-usr,show-expired-usr"
+longopts="$longopts,usr-id:,usr-name:,usr-pass:,usr-btime:,usr-etime:,usr-tsn-id:"
+
+#user info keys
+longopts="$longopts,add-ui,expire-ui,show-all-ui,show-active-ui,show-expired-ui"
+longopts="$longopts,ui-cname:,ui-sname:,ui-company:,ui-email:,ui-phone:"
+longopts="$longopts,ui-desc:,ui-btime:,ui-etime:,ui-tsn-id:"
 
 t=$(getopt -o $shortopts --long $longopts -n 'yasim' -- "$@")
 
@@ -412,6 +572,31 @@ while true ; do
 		--show-all-urg) show_all_urg=1; shift;;
 		--show-active-urg) show_active_urg=1; shift;;
 		--show-expired-urg) show_expired_urg=1; shift;;
+		--usr-id) usr_id=$2; shift 2;;
+                --usr-name) usr_name=$2; shift 2;;
+                --usr-pass) usr_pass=$2; shift 2;;
+                --usr-btime) usr_btime=$2; shift 2;;
+                --usr-etime) usr_etime=$2; shift 2;;
+                --usr-tsn-id) usr_tsn_id=$2; shift 2;;
+                --add-usr) add_usr=1; shift;;
+                --expire-usr) expire_usr=1; shift;;
+                --show-all-usr) show_all_usr=1; shift;;
+                --show-active-usr) show_active_usr=1; shift;;
+                --show-expired-usr) show_expired_usr=1; shift;;
+                --ui-cname) ui_cname=$2; shift 2;;
+                --ui-sname) ui_sname=$2; shift 2;;
+                --ui-company) ui_company=$2; shift 2;;
+                --ui-email) ui_email=$2; shift 2;;
+                --ui-phone) ui_phone=$2; shift 2;;
+                --ui-desc) ui_desc=$2; shift 2;;
+                --ui-btime) ui_btime=$2; shift 2;;
+                --ui-etime) ui_etime=$2; shift 2;;
+                --ui-tsn-id) ui_tsn_id=$2; shift 2;;
+                --add-ui) add_ui=1; shift;;
+                --expire-ui) expire_ui=1; shift;;
+                --show-all-ui) show_all_ui=1; shift;;
+                --show-active-ui) show_active_ui=1; shift;;
+                --show-expired-ui) show_expired_ui=1; shift;;
 		--) shift ; break ;;
 		*) echo "Internal error!" ; exit 1 ;;
 	esac
@@ -469,3 +654,27 @@ done
 [ "$show_active_urg" == 1 ] && show_active_urg
 
 [ "$show_expired_urg" == 1 ] && show_expired_urg
+
+#User block
+
+[ "$add_usr" == 1 ] && add_usr
+
+[ "$expire_usr" == 1 ] && expire_usr
+
+[ "$show_all_usr" == 1 ] && show_all_usr
+
+[ "$show_active_usr" == 1 ] && show_active_usr
+
+[ "$show_expired_usr" == 1 ] && show_expired_usr
+
+#User info block
+
+[ "$add_ui" == 1 ] && add_ui
+
+[ "$expire_ui" == 1 ] && expire_ui
+
+[ "$show_all_ui" == 1 ] && show_all_ui
+
+[ "$show_active_ui" == 1 ] && show_active_ui
+
+[ "$show_expired_ui" == 1 ] && show_expired_ui
