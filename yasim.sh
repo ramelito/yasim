@@ -18,6 +18,8 @@
 
 sqlite3opts="-header"
 
+test -f $HOME/.yasimrc && source $HOME/.yasimrc
+
 help_usage() {
 
 echo "	
@@ -25,7 +27,7 @@ Yasim usage
 	--help, -h		show this information
 
 Database
-	--init			database initialize
+	--init			database initialize (previous db will be DELETED!)
 	--db-scheme		database scheme (mandatory)
 	--db-file		database filename (mandatory)
 
@@ -54,6 +56,30 @@ User roles (with valid ns-id)
         --ur-btime              user role begin of use time (optional)
         --ur-etime              user role expire of use time (optional)
         --ur-tsn-id             user role transaction id to expire (mandatory)
+
+User groups (with valid ns-id)
+        --add-ug                add new user group
+        --expire-ug             expire existing user group
+        --show-all-ug           show all user groups
+        --show-active-ug        show active user groups
+        --show-expired-ug       show expired user groups
+        --ug-id                 user group id (mandatory)
+        --ug-name               user group name (mandatory)
+        --ug-desc               user group description (mandatory)
+        --ug-btime              user group begin of use time (optional)
+        --ug-etime              user group expire of use time (optional)
+        --ug-tsn-id             user group transaction id to expire (mandatory)
+
+User role and group binding (with valid ns-id, ur-id and ug-id)
+	--add-urg		add bind between user role and group
+	--expire-urg		expire bind between user role and group
+        --show-all-urg          show all user role and group bindings
+        --show-active-urg       show active user role and group bindings
+        --show-expired-urg      show expired user role and group bindings
+	--urg-id		user role and group bind id (mandatory)
+	--urg-btime		user role and group binding begin of use time (optional)
+	--urg-etime		user role and group binding end of use time (optional)
+	--urg-tsn-id		user role and group transaction id to expire (mandatory)
 "
 }
 
@@ -183,6 +209,134 @@ show_expired_ur () {
         sqlite3 $sqlite3opts $db_file "$q"
 }
 
+add_ug () {
+
+        check_ns
+        [ "X$ug_id" == "X" ] && exit 1
+        [ "X$ug_name" == "X" ] && exit 1
+        [ "X$ug_desc" == "X" ] && exit 1
+        [ "X$ug_btime" == "X" ] && ug_btime=$(date "+%Y-%m-%d %H:%M:%S")
+        q="insert or rollback into user_groups (ug_id,ug_name,ug_desc,ug_btime,ns_id)"
+        q="$q values ($ug_id,'$ug_name','$ug_desc','$ug_btime',$ns_id);"
+        sqlite3 $sqlite3opts $db_file "$q"
+
+}
+
+expire_ug () {
+
+        [ "X$ug_tsn_id" == "X" ] && exit 1
+        [ "X$ug_etime" == "X" ] && ug_etime=$(date "+%Y-%m-%d %H:%M:%S")
+        q="insert or rollback into ug_exp (id,ug_etime) values ($ug_tsn_id,'$ug_etime');"
+        sqlite3 $sqlite3opts $db_file "$q"
+
+}
+
+
+show_all_ug () {
+
+        check_ns
+        q="select * from user_groups where ns_id=$ns_id order by ug_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_active_ug () {
+
+        check_ns
+        q="select * from user_groups"
+        q="$q where id not in"
+        q="$q (select id from ug_exp)"
+        q="$q and user_groups.ug_btime < datetime('now','localtime')"
+        q="$q and ns_id=$ns_id"
+        q="$q order by ug_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_expired_ug () {
+
+        check_ns
+        q="select user_groups.*, ug_exp.ug_etime from user_groups, ug_exp"
+        q="$q where user_groups.id==ug_exp.id"
+        q="$q and ug_exp.ug_etime < datetime('now','localtime')"
+        q="$q and user_groups.ns_id=$ns_id"
+        q="$q order by ug_exp.ug_etime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+#User role and group binding funcs
+
+add_urg () {
+
+        check_ns
+        [ "X$urg_id" == "X" ] && exit 1
+	[ "X$ur_id" == "X" ] && exit 1
+	[ "X$ug_id" == "X" ] && exit 1
+        [ "X$urg_btime" == "X" ] && urg_btime=$(date "+%Y-%m-%d %H:%M:%S")
+        q="insert or rollback into ur_ug_map (urg_id,urg_btime,ur_id,ug_id,ns_id)"
+        q="$q values ($urg_id,'$urg_btime',$ur_id,$ug_id,$ns_id);"
+        sqlite3 $sqlite3opts $db_file "$q"
+
+}
+
+expire_urg () {
+
+        [ "X$urg_tsn_id" == "X" ] && exit 1
+        [ "X$urg_etime" == "X" ] && urg_etime=$(date "+%Y-%m-%d %H:%M:%S")
+        q="insert or rollback into urg_exp (id,urg_etime) values ($urg_tsn_id,'$urg_etime');"
+        sqlite3 $sqlite3opts $db_file "$q"
+
+}
+
+show_all_urg () {
+
+        check_ns
+	q="select ur_ug_map.id, ur_ug_map.urg_id, ur_ug_map.ug_id, ur_ug_map.ur_id,"
+	q="$q ur_ug_map.urg_btime, ur_ug_map.ns_id,"
+	q="$q user_groups.ug_name, user_roles.ur_name"
+	q="$q from ur_ug_map"
+	q="$q left join user_groups on ur_ug_map.ug_id=user_groups.ug_id"
+	q="$q left join user_roles on ur_ug_map.ur_id=user_roles.ur_id"
+	q="$q where ur_ug_map.ns_id=$ns_id"
+	q="$q group by ur_ug_map.id"
+	q="$q order by user_groups.ug_id, user_roles.ur_id, urg_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_active_urg () {
+
+        check_ns
+	q="select ur_ug_map.id, ur_ug_map.urg_id, ur_ug_map.ug_id, ur_ug_map.ur_id,"
+	q="$q ur_ug_map.urg_btime, ur_ug_map.ns_id,"
+	q="$q user_groups.ug_name, user_roles.ur_name"
+	q="$q from ur_ug_map"
+	q="$q left join user_groups on ur_ug_map.ug_id=user_groups.ug_id"
+	q="$q left join user_roles on ur_ug_map.ur_id=user_roles.ur_id"
+        q="$q where ur_ug_map.id not in"
+        q="$q (select id from urg_exp)"
+        q="$q and ur_ug_map.urg_btime < datetime('now','localtime')"
+        q="$q and ur_ug_map.ns_id=$ns_id"
+	q="$q group by ur_ug_map.id"
+	q="$q order by user_groups.ug_id, user_roles.ur_id, urg_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_expired_urg () {
+
+        check_ns
+	q="select ur_ug_map.id, ur_ug_map.urg_id, ur_ug_map.ug_id, ur_ug_map.ur_id,"
+	q="$q ur_ug_map.urg_btime, ur_ug_map.ns_id,"
+	q="$q user_groups.ug_name, user_roles.ur_name"
+	q="$q from ur_ug_map, urg_exp"
+	q="$q left join user_groups on ur_ug_map.ug_id=user_groups.ug_id"
+	q="$q left join user_roles on ur_ug_map.ur_id=user_roles.ur_id"
+        q="$q where ur_ug_map.id in"
+        q="$q (select id from urg_exp)"
+        q="$q and ur_ug_map.urg_btime < datetime('now','localtime')"
+        q="$q and ur_ug_map.ns_id=$ns_id"
+	q="$q group by ur_ug_map.id"
+	q="$q order by user_groups.ug_id, user_roles.ur_id, urg_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
 shortopts="h"
 
 #global keys
@@ -195,6 +349,14 @@ longopts="$longopts,ns-id:,ns-name:,ns-desc:,ns-btime:,ns-etime:,ns-tsn-id:"
 #user roles keys
 longopts="$longopts,add-ur,expire-ur,show-all-ur,show-active-ur,show-expired-ur"
 longopts="$longopts,ur-id:,ur-name:,ur-desc:,ur-btime:,ur-etime:,ur-tsn-id:"
+
+#user groups keys
+longopts="$longopts,add-ug,expire-ug,show-all-ug,show-active-ug,show-expired-ug"
+longopts="$longopts,ug-id:,ug-name:,ug-desc:,ug-btime:,ug-etime:,ug-tsn-id:"
+
+#user role and group bind keys
+longopts="$longopts,add-urg,expire-urg,show-all-urg,show-active-urg,show-expired-urg"
+longopts="$longopts,urg-id:,urg-btime:,urg-etime:,urg-tsn-id:"
 
 t=$(getopt -o $shortopts --long $longopts -n 'yasim' -- "$@")
 
@@ -230,6 +392,26 @@ while true ; do
                 --show-all-ur) show_all_ur=1; shift;;
                 --show-active-ur) show_active_ur=1; shift;;
                 --show-expired-ur) show_expired_ur=1; shift;;
+                --ug-id) ug_id=$2; shift 2;;
+                --ug-name) ug_name=$2; shift 2;;
+                --ug-desc) ug_desc=$2; shift 2;;
+                --ug-btime) ug_btime=$2; shift 2;;
+                --ug-etime) ug_etime=$2; shift 2;;
+                --ug-tsn-id) ug_tsn_id=$2; shift 2;;
+                --add-ug) add_ug=1; shift;;
+                --expire-ug) expire_ug=1; shift;;
+                --show-all-ug) show_all_ug=1; shift;;
+                --show-active-ug) show_active_ug=1; shift;;
+                --show-expired-ug) show_expired_ug=1; shift;;
+		--urg-id) urg_id=$2; shift 2;;
+                --urg-btime) urg_btime=$2; shift 2;;
+		--urg-etime) urg_etime=$2; shift 2;;
+		--urg-tsn-id) urg_tsn_id=$2; shift 2;;
+		--add-urg) add_urg=1; shift;;
+		--expire-urg) expire_urg=1; shift;;
+		--show-all-urg) show_all_urg=1; shift;;
+		--show-active-urg) show_active_urg=1; shift;;
+		--show-expired-urg) show_expired_urg=1; shift;;
 		--) shift ; break ;;
 		*) echo "Internal error!" ; exit 1 ;;
 	esac
@@ -263,3 +445,27 @@ done
 [ "$show_active_ur" == 1 ] && show_active_ur
 
 [ "$show_expired_ur" == 1 ] && show_expired_ur
+
+#User groups block
+
+[ "$add_ug" == 1 ] && add_ug
+
+[ "$expire_ug" == 1 ] && expire_ug
+
+[ "$show_all_ug" == 1 ] && show_all_ug
+
+[ "$show_active_ug" == 1 ] && show_active_ug
+
+[ "$show_expired_ug" == 1 ] && show_expired_ug
+
+#User role and group binding block
+
+[ "$add_urg" == 1 ] && add_urg
+
+[ "$expire_urg" == 1 ] && expire_urg
+
+[ "$show_all_urg" == 1 ] && show_all_urg
+
+[ "$show_active_urg" == 1 ] && show_active_urg
+
+[ "$show_expired_urg" == 1 ] && show_expired_urg
