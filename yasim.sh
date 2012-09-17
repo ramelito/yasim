@@ -26,6 +26,10 @@ echo "
 Yasim usage
 	--help, -h		show this information
 
+Ssh
+	--root-login		ssh root login for execution on devices
+	--root-sshkey		ssh identity file for execution on devices
+
 Database
 	--init			database initialize (previous db will be DELETED!)
 	--db-scheme		database scheme (mandatory)
@@ -192,6 +196,11 @@ Device and user roles binding (with valid ns-id, dr-id and ur-id)
         --udr-btime             device and user roles binding begin of use time (optional)
         --udr-etime             device and user roles binding end of use time (optional)
         --udr-tsn-id            device and user roles transaction id to expire (mandatory)
+
+Additional show stuff
+	--show-uur-map		show all active user and user role mappings
+	--show-ddr-map		show all active device and device role mappings
+	--show-ud-map		show all active user and device mappings
 "
 }
 
@@ -218,6 +227,15 @@ check_ns () {
 	msg="${msg}Valid ns-id can be found with command: ./yasim.sh --show-active-ns"
 	[ "X$ns_id" == "X" ] && echo -e $msg
 	[ "X$ns_id" == "X" ] && exit 1
+}
+
+check_root_ssh () {
+
+	msg="Provide valid root login and ssh key for execution.\n"
+	msg="${msg}./yasim.sh --root-login <root-login> --root-sshkey <root-identity-file>"
+	[ "X$root_sshkey" == "X" -o "X$root_login" == "X" ] && echo -e "$msg"
+	[ "X$root_sshkey" == "X" -o "X$root_login" == "X" ] && exit 1
+
 }
 
 #Namespace funcs
@@ -261,8 +279,11 @@ show_active_ns () {
 
 show_expired_ns () {
 
-	q="select namespaces.*, ns_exp.ns_etime from namespaces, ns_exp"
-	q="$q where namespaces.id==ns_exp.id and ns_exp.ns_etime < datetime('now','localtime')"
+	q="select * from namespaces, ns_exp"
+	q="$q where namespaces.id in"
+	q="$q (select id from ns_exp)"
+	q="$q and ns_exp.ns_etime < datetime('now','localtime')"
+	q="$q group by namespaces.id"
 	q="$q order by ns_exp.ns_etime desc"
 	sqlite3 $sqlite3opts $db_file "$q"
 }
@@ -313,10 +334,12 @@ show_active_ur () {
 show_expired_ur () {
 
 	check_ns
-        q="select user_roles.*, ur_exp.ur_etime from user_roles, ur_exp"
-        q="$q where user_roles.id==ur_exp.id"
+        q="select * from user_roles, ur_exp"
+        q="$q where user_roles.id in"
+	q="$q (select id from ur_exp)"
 	q="$q and ur_exp.ur_etime < datetime('now','localtime')"
 	q="$q and user_roles.ns_id=$ns_id"
+	q="$q group by user_roles.id"
         q="$q order by ur_exp.ur_etime desc"
         sqlite3 $sqlite3opts $db_file "$q"
 }
@@ -368,10 +391,12 @@ show_active_ug () {
 show_expired_ug () {
 
         check_ns
-        q="select user_groups.*, ug_exp.ug_etime from user_groups, ug_exp"
-        q="$q where user_groups.id==ug_exp.id"
+        q="select * from user_groups, ug_exp"
+        q="$q where user_groups.id in"
+        q="$q (select id from ug_exp)"
         q="$q and ug_exp.ug_etime < datetime('now','localtime')"
         q="$q and user_groups.ns_id=$ns_id"
+	q="$q group by user_groups.id"
         q="$q order by ug_exp.ug_etime desc"
         sqlite3 $sqlite3opts $db_file "$q"
 }
@@ -410,6 +435,8 @@ show_all_urg () {
 	q="$q left join user_groups on ur_ug_map.ug_id=user_groups.ug_id"
 	q="$q left join user_roles on ur_ug_map.ur_id=user_roles.ur_id"
 	q="$q where ur_ug_map.ns_id=$ns_id"
+        q="$q and user_groups.ns_id=$ns_id"
+        q="$q and user_roles.ns_id=$ns_id"
 	q="$q group by ur_ug_map.id"
 	q="$q order by user_groups.ug_id, user_roles.ur_id, urg_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -426,8 +453,16 @@ show_active_urg () {
 	q="$q left join user_roles on ur_ug_map.ur_id=user_roles.ur_id"
         q="$q where ur_ug_map.id not in"
         q="$q (select id from urg_exp)"
+        q="$q and user_groups.id not in"
+        q="$q (select id from ug_exp)"
+        q="$q and user_roles.id not in"
+        q="$q (select id from ur_exp)"
         q="$q and ur_ug_map.urg_btime < datetime('now','localtime')"
+        q="$q and user_groups.ug_btime < datetime('now','localtime')"
+        q="$q and user_roles.ur_btime < datetime('now','localtime')"
         q="$q and ur_ug_map.ns_id=$ns_id"
+        q="$q and user_groups.ns_id=$ns_id"
+        q="$q and user_roles.ns_id=$ns_id"
 	q="$q group by ur_ug_map.id"
 	q="$q order by user_groups.ug_id, user_roles.ur_id, urg_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -446,6 +481,8 @@ show_expired_urg () {
         q="$q (select id from urg_exp)"
         q="$q and ur_ug_map.urg_btime < datetime('now','localtime')"
         q="$q and ur_ug_map.ns_id=$ns_id"
+        q="$q and user_groups.ns_id=$ns_id"
+        q="$q and user_roles.ns_id=$ns_id"
 	q="$q group by ur_ug_map.id"
 	q="$q order by user_groups.ug_id, user_roles.ur_id, urg_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -480,7 +517,9 @@ show_all_usr () {
         check_ns
         q="select * from users"
 	q="$q left join user_info on users.usr_id=user_info.usr_id"
-	q="$q where users.ns_id=$ns_id order by users.usr_btime desc"
+	q="$q where users.ns_id=$ns_id"
+	q="$q and user_info.ns_id=$ns_id"
+	q="$q order by users.usr_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
 }
 
@@ -494,7 +533,9 @@ show_active_usr () {
         q="$q and user_info.id not in"
         q="$q (select id from ui_exp)"
         q="$q and users.usr_btime < datetime('now','localtime')"
+        q="$q and user_info.ui_btime < datetime('now','localtime')"
         q="$q and users.ns_id=$ns_id"
+        q="$q and user_info.ns_id=$ns_id"
         q="$q order by users.usr_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
 }
@@ -502,13 +543,14 @@ show_active_usr () {
 show_expired_usr () {
 
         check_ns
-        q="select * from users"
+        q="select * from users, ui_exp, usr_exp"
         q="$q left join user_info on users.usr_id=user_info.usr_id"
-        q="$q inner join usr_exp on users.id=usr_exp.id"
+        q="$q where users.id in"
+        q="$q (select id from usr_exp)"
         q="$q and usr_exp.usr_etime < datetime('now','localtime')"
         q="$q and users.ns_id=$ns_id"
+        q="$q and user_info.ns_id=$ns_id"
         q="$q order by usr_exp.usr_etime desc"
-	
         sqlite3 $sqlite3opts $db_file "$q"
 }
 
@@ -606,6 +648,8 @@ show_all_uug () {
         q="$q left join user_groups on ug_usr_map.ug_id=user_groups.ug_id"
         q="$q left join users on ug_usr_map.usr_id=users.usr_id"
         q="$q where ug_usr_map.ns_id=$ns_id"
+        q="$q and user_groups.ns_id=$ns_id"
+        q="$q and users.ns_id=$ns_id"
         q="$q group by ug_usr_map.id"
         q="$q order by users.usr_id, user_groups.ug_id, uug_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -622,8 +666,16 @@ show_active_uug () {
         q="$q left join users on ug_usr_map.usr_id=users.usr_id"
         q="$q where ug_usr_map.id not in"
         q="$q (select id from uug_exp)"
+        q="$q and user_groups.id not in"
+        q="$q (select id from ug_exp)"
+        q="$q and users.id not in"
+        q="$q (select id from usr_exp)"
         q="$q and ug_usr_map.uug_btime < datetime('now','localtime')"
+        q="$q and user_groups.ug_btime < datetime('now','localtime')"
+        q="$q and users.usr_btime < datetime('now','localtime')"
         q="$q and ug_usr_map.ns_id=$ns_id"
+        q="$q and user_groups.ns_id=$ns_id"
+        q="$q and users.ns_id=$ns_id"
         q="$q group by ug_usr_map.id"
         q="$q order by users.usr_id, user_groups.ug_id, uug_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -642,6 +694,8 @@ show_expired_uug () {
         q="$q (select id from uug_exp)"
         q="$q and ug_usr_map.uug_btime < datetime('now','localtime')"
         q="$q and ug_usr_map.ns_id=$ns_id"
+        q="$q and user_groups.ns_id=$ns_id"
+        q="$q and users.ns_id=$ns_id"
         q="$q group by ug_usr_map.id"
         q="$q order by users.usr_id, user_groups.ug_id, uug_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -693,8 +747,10 @@ show_active_dr () {
 show_expired_dr () {
 
         check_ns
-        q="select device_roles.*, dr_exp.dr_etime from device_roles, dr_exp"
-        q="$q where device_roles.id==dr_exp.id"
+        q="select device_roles.*, dr_exp.dr_etime"
+	q="$q from device_roles, dr_exp"
+        q="$q where device_roles.id in"
+        q="$q (select id from dr_exp)"
         q="$q and dr_exp.dr_etime < datetime('now','localtime')"
         q="$q and device_roles.ns_id=$ns_id"
         q="$q order by dr_exp.dr_etime desc"
@@ -793,11 +849,8 @@ show_active_dev () {
 
         check_ns
         q="select * from devices"
-#        q="$q left join user_info on devices.dev_id=user_info.dev_id"
         q="$q where devices.id not in"
         q="$q (select id from dev_exp)"
-#        q="$q and user_info.id not in"
-#        q="$q (select id from ui_exp)"
         q="$q and devices.dev_btime < datetime('now','localtime')"
         q="$q and devices.ns_id=$ns_id"
         q="$q order by devices.dev_btime desc"
@@ -849,6 +902,8 @@ show_all_drg () {
         q="$q left join device_groups on dr_dg_map.dg_id=device_groups.dg_id"
         q="$q left join device_roles on dr_dg_map.dr_id=device_roles.dr_id"
         q="$q where dr_dg_map.ns_id=$ns_id"
+        q="$q and device_roles.ns_id=$ns_id"
+        q="$q and device_groups.ns_id=$ns_id"
         q="$q group by dr_dg_map.id"
         q="$q order by device_groups.dg_id, device_roles.dr_id, drg_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -865,8 +920,16 @@ show_active_drg () {
         q="$q left join device_roles on dr_dg_map.dr_id=device_roles.dr_id"
         q="$q where dr_dg_map.id not in"
         q="$q (select id from drg_exp)"
+        q="$q and device_groups.id not in"
+        q="$q (select id from dg_exp)"
+        q="$q and device_roles.id not in"
+        q="$q (select id from dr_exp)"
         q="$q and dr_dg_map.drg_btime < datetime('now','localtime')"
+        q="$q and device_groups.dg_btime < datetime('now','localtime')"
+        q="$q and device_roles.dr_btime < datetime('now','localtime')"
         q="$q and dr_dg_map.ns_id=$ns_id"
+        q="$q and device_roles.ns_id=$ns_id"
+        q="$q and device_groups.ns_id=$ns_id"
         q="$q group by dr_dg_map.id"
         q="$q order by device_groups.dg_id, device_roles.dr_id, drg_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -885,6 +948,8 @@ show_expired_drg () {
         q="$q (select id from drg_exp)"
         q="$q and dr_dg_map.drg_btime < datetime('now','localtime')"
         q="$q and dr_dg_map.ns_id=$ns_id"
+        q="$q and device_roles.ns_id=$ns_id"
+        q="$q and device_groups.ns_id=$ns_id"
         q="$q group by dr_dg_map.id"
         q="$q order by device_groups.dg_id, device_roles.dr_id, drg_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -924,6 +989,8 @@ show_all_ddg () {
         q="$q left join device_groups on dg_dev_map.dg_id=device_groups.dg_id"
         q="$q left join devices on dg_dev_map.dev_id=devices.dev_id"
         q="$q where dg_dev_map.ns_id=$ns_id"
+        q="$q and device_groups.ns_id=$ns_id"
+        q="$q and devices.ns_id=$ns_id"
         q="$q group by dg_dev_map.id"
         q="$q order by devices.dev_id, device_groups.dg_id, ddg_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -940,8 +1007,16 @@ show_active_ddg () {
         q="$q left join devices on dg_dev_map.dev_id=devices.dev_id"
         q="$q where dg_dev_map.id not in"
         q="$q (select id from ddg_exp)"
+        q="$q and device_groups.id not in"
+        q="$q (select id from dg_exp)"
+        q="$q and devices.id not in"
+        q="$q (select id from dev_exp)"
         q="$q and dg_dev_map.ddg_btime < datetime('now','localtime')"
+        q="$q and device_groups.dg_btime < datetime('now','localtime')"
+        q="$q and devices.dev_btime < datetime('now','localtime')"
         q="$q and dg_dev_map.ns_id=$ns_id"
+        q="$q and device_groups.ns_id=$ns_id"
+        q="$q and devices.ns_id=$ns_id"
         q="$q group by dg_dev_map.id"
         q="$q order by devices.dev_id, device_groups.dg_id, ddg_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -960,6 +1035,8 @@ show_expired_ddg () {
         q="$q (select id from ddg_exp)"
         q="$q and dg_dev_map.ddg_btime < datetime('now','localtime')"
         q="$q and dg_dev_map.ns_id=$ns_id"
+        q="$q and device_groups.ns_id=$ns_id"
+        q="$q and devices.ns_id=$ns_id"
         q="$q group by dg_dev_map.id"
         q="$q order by devices.dev_id, device_groups.dg_id, ddg_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -1000,6 +1077,8 @@ show_all_udr () {
         q="$q left join device_roles on udr_map.dr_id=device_roles.dr_id"
         q="$q left join user_roles on udr_map.ur_id=user_roles.ur_id"
         q="$q where udr_map.ns_id=$ns_id"
+        q="$q and user_roles.ns_id=$ns_id"
+        q="$q and device_roles.ns_id=$ns_id"
         q="$q group by udr_map.id"
         q="$q order by device_roles.dr_id, user_roles.ur_id, udr_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -1016,8 +1095,16 @@ show_active_udr () {
         q="$q left join user_roles on udr_map.ur_id=user_roles.ur_id"
         q="$q where udr_map.id not in"
         q="$q (select id from udr_exp)"
+        q="$q and device_roles.id not in"
+        q="$q (select id from dr_exp)"
+        q="$q and user_roles.id not in"
+        q="$q (select id from ur_exp)"
         q="$q and udr_map.udr_btime < datetime('now','localtime')"
+        q="$q and device_roles.dr_btime < datetime('now','localtime')"
+        q="$q and user_roles.ur_btime < datetime('now','localtime')"
         q="$q and udr_map.ns_id=$ns_id"
+        q="$q and user_roles.ns_id=$ns_id"
+        q="$q and device_roles.ns_id=$ns_id"
         q="$q group by udr_map.id"
         q="$q order by device_roles.dr_id, user_roles.ur_id, udr_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -1036,16 +1123,316 @@ show_expired_udr () {
         q="$q (select id from udr_exp)"
         q="$q and udr_map.udr_btime < datetime('now','localtime')"
         q="$q and udr_map.ns_id=$ns_id"
+        q="$q and user_roles.ns_id=$ns_id"
+        q="$q and device_roles.ns_id=$ns_id"
         q="$q group by udr_map.id"
         q="$q order by device_roles.dr_id, user_roles.ur_id, udr_btime desc"
         sqlite3 $sqlite3opts $db_file "$q"
 }
 
+show_uur_map () {
+
+	check_ns
+	q="select users.usr_name, user_roles.ur_name"
+	q="$q from ur_ug_map"
+	q="$q left join user_roles on ur_ug_map.ur_id=user_roles.ur_id"
+	q="$q left join user_groups on ur_ug_map.ug_id=user_groups.ug_id"
+	q="$q left join ug_usr_map on ur_ug_map.ug_id=ug_usr_map.ug_id"
+	q="$q left join users on ug_usr_map.usr_id=users.usr_id"
+	q="$q where ur_ug_map.id not in"
+	q="$q (select id from urg_exp)"
+	q="$q and user_roles.id not in"
+	q="$q (select id from ur_exp)"
+	q="$q and user_groups.id not in"
+	q="$q (select id from ug_exp)"
+	q="$q and ug_usr_map.id not in"
+	q="$q (select id from uug_exp)"
+	q="$q and users.id not in"
+	q="$q (select id from usr_exp)"
+	q="$q and ur_ug_map.urg_btime < datetime('now','localtime')"
+	q="$q and user_roles.ur_btime < datetime('now','localtime')"
+	q="$q and user_groups.ug_btime < datetime('now','localtime')"
+	q="$q and ug_usr_map.uug_btime < datetime('now','localtime')"
+	q="$q and users.usr_btime < datetime('now','localtime')"
+	q="$q and ur_ug_map.ns_id=$ns_id"
+        q="$q and user_roles.ns_id=$ns_id"
+        q="$q and user_groups.ns_id=$ns_id"
+        q="$q and ug_usr_map.ns_id=$ns_id"
+        q="$q and users.ns_id=$ns_id"
+	q="$q group by users.usr_name, user_roles.ur_name"
+	q="$q order by users.usr_name"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_ddr_map () {
+
+	check_ns
+	q="select devices.dev_name, device_roles.dr_name"
+	q="$q from dr_dg_map"
+	q="$q left join device_roles on dr_dg_map.dr_id=device_roles.dr_id"
+	q="$q left join device_groups on dr_dg_map.dg_id=device_groups.dg_id"
+	q="$q left join dg_dev_map on dr_dg_map.dg_id=dg_dev_map.dg_id"
+	q="$q left join devices on dg_dev_map.dev_id=devices.dev_id"
+	q="$q where dr_dg_map.id not in"
+	q="$q (select id from drg_exp)"
+	q="$q and device_roles.id not in"
+	q="$q (select id from dr_exp)"
+	q="$q and device_groups.id not in"
+	q="$q (select id from dg_exp)"
+	q="$q and dg_dev_map.id not in"
+	q="$q (select id from ddg_exp)"
+	q="$q and devices.id not in"
+	q="$q (select id from dev_exp)"
+	q="$q and dr_dg_map.drg_btime < datetime('now','localtime')"
+	q="$q and device_roles.dr_btime < datetime('now','localtime')"
+	q="$q and device_groups.dg_btime < datetime('now','localtime')"
+	q="$q and dg_dev_map.ddg_btime < datetime('now','localtime')"
+	q="$q and devices.dev_btime < datetime('now','localtime')"
+	q="$q and dr_dg_map.ns_id=$ns_id"
+        q="$q and device_roles.ns_id=$ns_id"
+        q="$q and device_groups.ns_id=$ns_id"
+        q="$q and dg_dev_map.ns_id=$ns_id"
+        q="$q and devices.ns_id=$ns_id"
+	q="$q group by devices.dev_name, device_roles.dr_name"
+	q="$q order by devices.dev_name"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_ud_map () {
+	
+	check_ns
+        q="select devices.dev_name, users.usr_name"
+        q="$q from udr_map"
+	q="$q left join ur_ug_map on udr_map.ur_id=ur_ug_map.ur_id"
+        q="$q left join user_roles on ur_ug_map.ur_id=user_roles.ur_id"
+	q="$q left join user_groups on ur_ug_map.ug_id=user_groups.ug_id"
+	q="$q left join ug_usr_map on ur_ug_map.ug_id=ug_usr_map.ug_id"
+	q="$q left join users on ug_usr_map.usr_id=users.usr_id"
+        q="$q left join dr_dg_map on udr_map.dr_id=dr_dg_map.dr_id"
+	q="$q left join device_roles on dr_dg_map.dr_id=device_roles.dr_id"
+	q="$q left join device_groups on dr_dg_map.dg_id=device_groups.dg_id"
+	q="$q left join dg_dev_map on dr_dg_map.dg_id=dg_dev_map.dg_id"
+	q="$q left join devices on dg_dev_map.dev_id=devices.dev_id"
+        q="$q where udr_map.id not in"
+        q="$q (select id from udr_exp)"
+	q="$q and ur_ug_map.id not in"
+	q="$q (select id from urg_exp)"
+	q="$q and user_roles.id not in"
+	q="$q (select id from ur_exp)"
+	q="$q and user_groups.id not in"
+	q="$q (select id from ug_exp)"
+	q="$q and ug_usr_map.id not in"
+	q="$q (select id from uug_exp)"
+	q="$q and users.id not in"
+	q="$q (select id from usr_exp)"
+	q="$q and dr_dg_map.id not in"
+	q="$q (select id from drg_exp)"
+	q="$q and device_roles.id not in"
+	q="$q (select id from dr_exp)"
+	q="$q and device_groups.id not in"
+	q="$q (select id from dg_exp)"
+	q="$q and dg_dev_map.id not in"
+	q="$q (select id from ddg_exp)"
+	q="$q and devices.id not in"
+	q="$q (select id from dev_exp)"
+	q="$q and udr_map.udr_btime < datetime('now','localtime')"
+	q="$q and ur_ug_map.urg_btime < datetime('now','localtime')"
+	q="$q and user_roles.ur_btime < datetime('now','localtime')"
+	q="$q and user_groups.ug_btime < datetime('now','localtime')"
+	q="$q and ug_usr_map.uug_btime < datetime('now','localtime')"
+	q="$q and users.usr_btime < datetime('now','localtime')"
+	q="$q and dr_dg_map.drg_btime < datetime('now','localtime')"
+	q="$q and device_roles.dr_btime < datetime('now','localtime')"
+	q="$q and device_groups.dg_btime < datetime('now','localtime')"
+	q="$q and dg_dev_map.ddg_btime < datetime('now','localtime')"
+	q="$q and devices.dev_btime < datetime('now','localtime')"
+        q="$q and udr_map.ns_id=$ns_id"
+        q="$q and ur_ug_map.ns_id=$ns_id"
+        q="$q and user_roles.ns_id=$ns_id"
+        q="$q and user_groups.ns_id=$ns_id"
+        q="$q and ug_usr_map.ns_id=$ns_id"
+        q="$q and users.ns_id=$ns_id"
+        q="$q and dr_dg_map.ns_id=$ns_id"
+        q="$q and device_roles.ns_id=$ns_id"
+        q="$q and device_groups.ns_id=$ns_id"
+        q="$q and dg_dev_map.ns_id=$ns_id"
+        q="$q and devices.ns_id=$ns_id"
+	q="$q group by devices.dev_name, users.usr_name"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+get_full_ul () {
+
+        check_ns
+        q="select usr_id from users"
+        q="$q where users.id not in"
+        q="$q (select id from usr_exp)"
+        q="$q and users.usr_btime < datetime('now','localtime')"
+        q="$q and users.ns_id=$ns_id"
+        q="$q order by users.usr_id desc"
+        sqlite3 $db_file "$q"
+}
+
+get_full_dl () {
+
+        check_ns
+        q="select dev_id from devices"
+        q="$q where devices.id not in"
+        q="$q (select id from dev_exp)"
+        q="$q and devices.dev_btime < datetime('now','localtime')"
+        q="$q and devices.ns_id=$ns_id"
+        q="$q order by devices.dev_id desc"
+        sqlite3 $db_file "$q"
+}
+
+get_dev_uns () {
+
+	check_ns
+	[ "X$1" == "X" ] && exit 1 || dev_id1=$1
+
+        q="select users.usr_name"
+        q="$q from udr_map"
+	q="$q left join ur_ug_map on udr_map.ur_id=ur_ug_map.ur_id"
+        q="$q left join user_roles on ur_ug_map.ur_id=user_roles.ur_id"
+	q="$q left join user_groups on ur_ug_map.ug_id=user_groups.ug_id"
+	q="$q left join ug_usr_map on ur_ug_map.ug_id=ug_usr_map.ug_id"
+	q="$q left join users on ug_usr_map.usr_id=users.usr_id"
+        q="$q left join dr_dg_map on udr_map.dr_id=dr_dg_map.dr_id"
+	q="$q left join device_roles on dr_dg_map.dr_id=device_roles.dr_id"
+	q="$q left join device_groups on dr_dg_map.dg_id=device_groups.dg_id"
+	q="$q left join dg_dev_map on dr_dg_map.dg_id=dg_dev_map.dg_id"
+	q="$q left join devices on dg_dev_map.dev_id=devices.dev_id"
+        q="$q where udr_map.id not in"
+        q="$q (select id from udr_exp)"
+	q="$q and ur_ug_map.id not in"
+	q="$q (select id from urg_exp)"
+	q="$q and user_roles.id not in"
+	q="$q (select id from ur_exp)"
+	q="$q and user_groups.id not in"
+	q="$q (select id from ug_exp)"
+	q="$q and ug_usr_map.id not in"
+	q="$q (select id from uug_exp)"
+	q="$q and users.id not in"
+	q="$q (select id from usr_exp)"
+	q="$q and dr_dg_map.id not in"
+	q="$q (select id from drg_exp)"
+	q="$q and device_roles.id not in"
+	q="$q (select id from dr_exp)"
+	q="$q and device_groups.id not in"
+	q="$q (select id from dg_exp)"
+	q="$q and dg_dev_map.id not in"
+	q="$q (select id from ddg_exp)"
+	q="$q and devices.id not in"
+	q="$q (select id from dev_exp)"
+	q="$q and udr_map.udr_btime < datetime('now','localtime')"
+	q="$q and ur_ug_map.urg_btime < datetime('now','localtime')"
+	q="$q and user_roles.ur_btime < datetime('now','localtime')"
+	q="$q and user_groups.ug_btime < datetime('now','localtime')"
+	q="$q and ug_usr_map.uug_btime < datetime('now','localtime')"
+	q="$q and users.usr_btime < datetime('now','localtime')"
+	q="$q and dr_dg_map.drg_btime < datetime('now','localtime')"
+	q="$q and device_roles.dr_btime < datetime('now','localtime')"
+	q="$q and device_groups.dg_btime < datetime('now','localtime')"
+	q="$q and dg_dev_map.ddg_btime < datetime('now','localtime')"
+	q="$q and devices.dev_btime < datetime('now','localtime')"
+        q="$q and udr_map.ns_id=$ns_id"
+        q="$q and ur_ug_map.ns_id=$ns_id"
+        q="$q and user_roles.ns_id=$ns_id"
+        q="$q and user_groups.ns_id=$ns_id"
+        q="$q and ug_usr_map.ns_id=$ns_id"
+        q="$q and users.ns_id=$ns_id"
+        q="$q and dr_dg_map.ns_id=$ns_id"
+        q="$q and device_roles.ns_id=$ns_id"
+        q="$q and device_groups.ns_id=$ns_id"
+        q="$q and dg_dev_map.ns_id=$ns_id"
+        q="$q and devices.ns_id=$ns_id"
+	q="$q and devices.dev_id=$dev_id1"
+	q="$q group by users.usr_name"
+        sqlite3 $db_file "$q"
+}
+
+get_dev_name () {
+
+	check_ns
+	[ "X$1" == "X" ] && exit 1 || dev_id1=$1
+
+        q="select dev_name from devices"
+        q="$q where devices.id not in"
+        q="$q (select id from dev_exp)"
+        q="$q and devices.dev_btime < datetime('now','localtime')"
+        q="$q and devices.ns_id=$ns_id"
+	q="$q and dev_id=$dev_id1"
+	q="$q limit 1"
+        sqlite3 $db_file "$q"
+	
+
+}
+
+get_usr_dl () {
+	echo ""
+}
+
+rm_usrs_on_dev () {
+
+	check_root_ssh
+	[ "X$1" == "X" ] && exit 1 || dev_id1=$1
+
+	#get additional information for dev1
+	dev_name1=$(get_dev_name $dev_id1)
+
+	#get list of users from db
+	fromdb1=$(mktemp)
+	get_dev_uns $dev_id1 > $fromdb1
+
+	#get passwd file from dev1
+	passwd1=$(mktemp)
+	scp -i $root_sshkey $root_login@$dev_name1:/etc/passwd $passwd1
+		
+	#check retrieved passwd is not empty
+	if [ -e $passwd1 ]; then
+		rm $passwd1
+		echo "Could not retreive passwd file from $dev_name1. Skipping $dev_name1."
+		continue
+	fi
+		
+	#sedding retrieved passwd with known user list (root, daemon, etc...)
+	fromserver1=$(mktemp)
+	./knownusers.sed $(cat $passwd1 | cut -d: -f1) > $fromserver1
+
+	#get list of users on serverside to delete
+	userdeletelist1=$(mktemp)
+	sort $fromserver1 $fromdb1 $fromdb1 | uniq -u > $userdeletelist1
+
+	#read user delete list and perform user remove on the server
+	while read serveruser1; do
+
+	echo "Deleting $serveruser1 from $dev_name1."
+	ssh -i $root_sshkey -l $root_login $dev_name1 userdel $serveruser1
+		
+	done < $userdeletelist1
+	rm $fromdb1 $passwd1 $fromserver1 $userdeletelist1
+}
+
+exec_scnA () {
+
+	dev_list1=$(get_full_dl)
+
+	for dev_id1 in $dev_list1; do
+		rm_usrs_on_dev $dev_id1	
+	done
+}
 
 shortopts="h"
 
 #global keys
-longopts="help,init,db-file:,db-scheme:"
+longopts="help"
+
+#ssh keys
+
+longopts="$longopts,root-login:,root-sshkey:"
+
+#database keys
+longopts="$longopts,init,db-file:,db-scheme:"
 
 #namespace keys
 longopts="$longopts,add-ns,expire-ns,show-all-ns,show-active-ns,show-expired-ns"
@@ -1100,6 +1487,12 @@ longopts="$longopts,ddg-id:,ddg-btime:,ddg-etime:,ddg-tsn-id:"
 longopts="$longopts,add-udr,expire-udr,show-all-udr,show-active-udr,show-expired-udr"
 longopts="$longopts,udr-id:,udr-desc:,udr-btime:,udr-etime:,udr-tsn-id:"
 
+#show stuff
+longopts="$longopts,show-uur-map,show-ddr-map,show-ud-map"
+
+#executions
+longopts="$longopts,exec-scnA"
+
 t=$(getopt -o $shortopts --long $longopts -n 'yasim' -- "$@")
 
 if [ $? != 0 ] ; then echo "Terminating..." >&2 ; exit 1 ; fi
@@ -1109,6 +1502,8 @@ eval set -- "$t"
 while true ; do
 	case "$1" in
 		-h|--help) help_usage ; break ;;
+		--root-login) root_login=$2; shift 2;;
+		--root-sshkey) root_sshkey=$2; shift 2;;
 		--db-scheme) db_scheme=$2; shift 2;;
 		--db-file) db_file=$2; shift 2;;
 		--init) init_db=1; shift ;;
@@ -1249,6 +1644,10 @@ while true ; do
                 --show-all-udr) show_all_udr=1; shift;;
                 --show-active-udr) show_active_udr=1; shift;;
                 --show-expired-udr) show_expired_udr=1; shift;;
+		--show-uur-map) show_uur_map=1; shift ;;
+		--show-ddr-map) show_ddr_map=1; shift ;;
+		--show-ud-map) show_ud_map=1; shift ;;
+		--exec-scnA) exec_scnA=1; shift ;;
 		--) shift ; break ;;
 		*) echo "Internal error!" ; exit 1 ;;
 	esac
@@ -1415,3 +1814,14 @@ done
 
 [ "$show_expired_udr" == 1 ] && show_expired_udr
 
+#show additional stuff
+
+[ "$show_uur_map" == 1 ] && show_uur_map
+
+[ "$show_ddr_map" == 1 ] && show_ddr_map
+
+[ "$show_ud_map" == 1 ] && show_ud_map
+
+#executions
+
+[ "$exec_scnA" == 1 ] && exec_scnA
