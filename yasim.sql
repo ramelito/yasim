@@ -119,8 +119,7 @@ dg_id INTEGER NOT NULL,
 dg_name VARCHAR( 255 )  NOT NULL,
 dg_desc TEXT  NOT NULL,
 dg_btime DATETIME NOT NULL,
-ns_id REFERENCES namespaces (ns_id),
-dr_id REFERENCES device_roles (dr_id)
+ns_id REFERENCES namespaces (ns_id)
 );
 
 CREATE TABLE IF NOT EXISTS dg_exp (
@@ -134,8 +133,7 @@ dev_id INTEGER NOT NULL,
 dev_name VARCHAR( 255 )  NOT NULL,
 dev_desc TEXT  NOT NULL,
 dev_btime DATETIME NOT NULL,
-ns_id REFERENCES namespaces (ns_id),
-dg_id REFERENCES device_groups (dg_id)
+ns_id REFERENCES namespaces (ns_id)
 );
 
 CREATE TABLE IF NOT EXISTS dev_exp (

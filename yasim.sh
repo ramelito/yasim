@@ -201,6 +201,9 @@ Additional show stuff
 	--show-uur-map		show all active user and user role mappings
 	--show-ddr-map		show all active device and device role mappings
 	--show-ud-map		show all active user and device mappings
+
+Executions
+	--pretend		show what will do without actual write actions
 "
 }
 
@@ -235,7 +238,16 @@ check_root_ssh () {
 	msg="${msg}./yasim.sh --root-login <root-login> --root-sshkey <root-identity-file>"
 	[ "X$root_sshkey" == "X" -o "X$root_login" == "X" ] && echo -e "$msg"
 	[ "X$root_sshkey" == "X" -o "X$root_login" == "X" ] && exit 1
+	sshopts="-l $root_login -i $root_sshkey"
+	scpopts="-i $root_sshkey $root_login@"
+}
 
+check_keys_repo () {
+
+	msg="Provide valid path to keys repo.\n"
+	msg="${msg}./yasim.sh --keys-repo <path_to_keys_repo>"
+	[ "X$keys_repo" == "X" ] && echo -e "$msg"
+	[ "X$keys_repo" == "X" ] && echo 1 
 }
 
 #Namespace funcs
@@ -1264,31 +1276,68 @@ show_ud_map () {
 get_full_ul () {
 
         check_ns
-        q="select usr_id from users"
+        q="select usr_name from users"
         q="$q where users.id not in"
         q="$q (select id from usr_exp)"
         q="$q and users.usr_btime < datetime('now','localtime')"
         q="$q and users.ns_id=$ns_id"
-        q="$q order by users.usr_id desc"
+        q="$q order by users.usr_name"
         sqlite3 $db_file "$q"
 }
 
 get_full_dl () {
 
         check_ns
-        q="select dev_id from devices"
-        q="$q where devices.id not in"
+        q="select dev_name from devices"
+        q="$q where id not in"
         q="$q (select id from dev_exp)"
+        q="$q and dev_btime < datetime('now','localtime')"
+        q="$q and ns_id=$ns_id"
+	q="$q group by dev_name"
+        q="$q order by dev_name"
+        sqlite3 $db_file "$q"
+}
+
+get_dev_roles () {
+
+        check_ns
+	[ "X$1" == "X" ] && exit 1 || local dev_name1=$1
+
+        q="select dr_name from device_roles"
+	q="$q left join dr_dg_map on device_roles.dr_id=dr_dg_map.dr_id"
+	q="$q left join device_groups on device_groups.dg_id=dr_dg_map.dg_id"
+	q="$q left join dg_dev_map on device_groups.dg_id=dg_dev_map.dg_id"
+	q="$q left join devices on devices.dev_id=dg_dev_map.dev_id"
+        q="$q where device_roles.id not in"
+        q="$q (select id from dr_exp)"
+        q="$q and dr_dg_map.id not in"
+        q="$q (select id from drg_exp)"
+        q="$q and device_groups.id not in"
+        q="$q (select id from dg_exp)"
+        q="$q and dg_dev_map.id not in"
+        q="$q (select id from ddg_exp)"
+        q="$q and devices.id not in"
+        q="$q (select id from dev_exp)"
+        q="$q and device_roles.dr_btime < datetime('now','localtime')"
+        q="$q and dr_dg_map.drg_btime < datetime('now','localtime')"
+        q="$q and device_groups.dg_btime < datetime('now','localtime')"
+        q="$q and dg_dev_map.ddg_btime < datetime('now','localtime')"
         q="$q and devices.dev_btime < datetime('now','localtime')"
+        q="$q and device_roles.ns_id=$ns_id"
+        q="$q and dr_dg_map.ns_id=$ns_id"
+        q="$q and device_groups.ns_id=$ns_id"
+        q="$q and dg_dev_map.ns_id=$ns_id"
         q="$q and devices.ns_id=$ns_id"
-        q="$q order by devices.dev_id desc"
+	q="$q and devices.dev_name='$dev_name1'"
+	q="$q group by device_roles.dr_name"
+        q="$q order by device_roles.dr_name"
         sqlite3 $db_file "$q"
 }
 
 get_dev_uns () {
 
 	check_ns
-	[ "X$1" == "X" ] && exit 1 || dev_id1=$1
+	[ "X$1" == "X" ] && exit 1 || local dev_name1=$1
 
         q="select users.usr_name"
         q="$q from udr_map"
@@ -1346,26 +1395,9 @@ get_dev_uns () {
         q="$q and device_groups.ns_id=$ns_id"
         q="$q and dg_dev_map.ns_id=$ns_id"
         q="$q and devices.ns_id=$ns_id"
-	q="$q and devices.dev_id=$dev_id1"
+	q="$q and devices.dev_name='$dev_name1'"
 	q="$q group by users.usr_name"
         sqlite3 $db_file "$q"
-}
-
-get_dev_name () {
-
-	check_ns
-	[ "X$1" == "X" ] && exit 1 || dev_id1=$1
-
-        q="select dev_name from devices"
-        q="$q where devices.id not in"
-        q="$q (select id from dev_exp)"
-        q="$q and devices.dev_btime < datetime('now','localtime')"
-        q="$q and devices.ns_id=$ns_id"
-	q="$q and dev_id=$dev_id1"
-	q="$q limit 1"
-        sqlite3 $db_file "$q"
-	
-
 }
 
 get_usr_dl () {
@@ -1375,21 +1407,18 @@ get_usr_dl () {
 rm_usrs_on_dev () {
 
 	check_root_ssh
-	[ "X$1" == "X" ] && exit 1 || dev_id1=$1
-
-	#get additional information for dev1
-	dev_name1=$(get_dev_name $dev_id1)
+	[ "X$1" == "X" ] && exit 1 || dev_name1=$1
 
 	#get list of users from db
 	fromdb1=$(mktemp)
-	get_dev_uns $dev_id1 > $fromdb1
+	get_dev_uns $dev_name1 > $fromdb1
 
 	#get passwd file from dev1
 	passwd1=$(mktemp)
-	scp -i $root_sshkey $root_login@$dev_name1:/etc/passwd $passwd1
+	scp $scpopts$dev_name1:/etc/passwd $passwd1
 		
 	#check retrieved passwd is not empty
-	if [ -e $passwd1 ]; then
+	if [ ! -s $passwd1 ]; then
 		rm $passwd1
 		echo "Could not retreive passwd file from $dev_name1. Skipping $dev_name1."
 		continue
@@ -1397,28 +1426,145 @@ rm_usrs_on_dev () {
 		
 	#sedding retrieved passwd with known user list (root, daemon, etc...)
 	fromserver1=$(mktemp)
-	./knownusers.sed $(cat $passwd1 | cut -d: -f1) > $fromserver1
+	fromserver2=$(mktemp)
+	cat $passwd1 | cut -d: -f1 > $fromserver1
+	./knownusers.sed $fromserver1 > $fromserver2
 
 	#get list of users on serverside to delete
 	userdeletelist1=$(mktemp)
-	sort $fromserver1 $fromdb1 $fromdb1 | uniq -u > $userdeletelist1
+	sort $fromserver2 $fromdb1 $fromdb1 | uniq -u > $userdeletelist1
 
-	#read user delete list and perform user remove on the server
+	#read user delete list and perform user remove on the server (device specific)
 	while read serveruser1; do
 
-	echo "Deleting $serveruser1 from $dev_name1."
-	ssh -i $root_sshkey -l $root_login $dev_name1 userdel $serveruser1
+		echo "Deleting $serveruser1 from $dev_name1."
+		[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 sudo deluser $serveruser1
 		
 	done < $userdeletelist1
-	rm $fromdb1 $passwd1 $fromserver1 $userdeletelist1
+	rm $fromdb1 $passwd1 $fromserver1 $fromserver2 $userdeletelist1
+}
+
+get_usr_pass () {
+
+        check_ns
+	test "X$1" == "X" && exit 1 || local usr_from_db1=$2
+
+        q="select usr_pass from users"
+        q="$q where id not in"
+        q="$q (select id from usr_exp)"
+        q="$q and usr_btime < datetime('now','localtime')"
+        q="$q and ns_id=$ns_id"
+	q="$q and usr_name='$usr_from_db1'"
+	q="$q limit 1"
+        sqlite3 $db_file "$q"
+
+}
+
+get_passwd () {
+
+	check_root_ssh
+	test "X$1" == "X" && exit 1 || local dev_name1=$1
+	test -e "$2" && local passwd1=$2 || exit 1
+
+	#get passwd file from dev1
+	scp $scpopts$dev_name1:/etc/passwd $passwd1
+}
+
+chk_usr_on_dev () {
+
+	check_root_ssh
+	test "X$1" == "X" && exit 1 || local dev_name1=$1
+	test "X$2" == "X" && exit 1 || local usr_from_db1=$2
+	test -s $3 && local passwd1=$3 || exit 1
+	#TODO user checks
+
+}
+
+add_usr_on_dev () {
+
+	check_root_ssh
+	check_keys_repo
+
+	test "X$1" == "X" && exit 1 || local dev_name1=$1
+	test "X$2" == "X" && exit 1 || local usr_from_db1=$2
+	test -s $3 && local passwd1=$3 || exit 1
+	test -s $4 && local devroles1=$4 || exit 1
+	
+	echo "Check if user $usr_from_db1 exists on $dev_name1."
+
+	if [ $(grep -wc $usr_from_db1 $passwd1) -eq 1 ]; then
+		echo "User exists!"
+		chk_usr_on_dev $dev_name1 $usr_from_db1 $passwd1
+		return 0
+	fi
+
+	if [ $(grep -wc "tinycore" $devroles1) -eq 1 ]; then
+		echo "Device armed with tinycore OS."
+		local usr_pass=$(get_usr_pass $usr_from_db1)
+		ssh $sshopts $dev_name1 "sudo adduser -D $usr_from_db1"
+		ssh $sshopts $dev_name1 "sudo echo '$usr_from_db1:$usr_pass' | sudo chpasswd"
+		local usr_ssh_dir="/home/$usr_from_db1/.ssh"
+		ssh $sshopts $dev_name1 "sudo mkdir -p $usr_ssh_dir"
+		local rsakey="$keys_repo/$usr_from_db1.id_rsa.pub"
+		if [ -e "$rsakey" ] ; then
+			cat "$rsakey" | ssh $sshopts $dev_name1 "sudo cat - | sudo tee $usr_ssh_dir/autorized_keys"
+		else
+			echo "$rsakey does not exist!"
+		fi
+	fi
+
+	if [ $(grep -wc "ubuntu" $devroles1) -eq 1 ]; then
+		echo "Device armed with Ununtu OS."
+	fi
+}
+
+
+add_usrs_on_dev () {
+
+	[ "X$1" == "X" ] && exit 1 || local dev_name1=$1
+
+	#get passwd file from server
+	echo "Get passwd file from $dev_name1."
+	passwd1=$(mktemp)
+	get_passwd $dev_name1 $passwd1
+
+	if [ ! -s $passwd1 ]; then
+		echo "Failed to get passwd. Skipping $dev_name1."
+		rm $passwd1
+		return 1
+	fi
+
+	#get list of users from db
+	echo "Get user list for $dev_name1 from db."
+	fromdb1=$(mktemp)
+	get_dev_uns $dev_name1 > $fromdb1
+	
+	#get device roles from db
+	echo "Get device roles for $dev_name1 from db."
+	devroles1=$(mktemp)
+	get_dev_roles $dev_name1 > $devroles1
+
+	#add users on device one by one
+	while read usr_from_db1; do
+	
+		echo "Add $usr_from_db1 to $dev_name1."
+		add_usr_on_dev $dev_name1 $usr_from_db1 $passwd1 $devroles1
+
+	done < $fromdb1
+
+	rm $devroles1 $fromdb1 $passwd1
 }
 
 exec_scnA () {
 
-	dev_list1=$(get_full_dl)
+	echo "Get device list from db."
+	local dev_list1=$(get_full_dl)
 
-	for dev_id1 in $dev_list1; do
-		rm_usrs_on_dev $dev_id1	
+	for dev_name1 in $dev_list1; do
+#		rm_usrs_on_dev $dev_id1
+
+		echo "Let's add users on $dev_name1."
+		add_usrs_on_dev $dev_name1
 	done
 }
 
@@ -1429,7 +1575,7 @@ longopts="help"
 
 #ssh keys
 
-longopts="$longopts,root-login:,root-sshkey:"
+longopts="$longopts,keys-repo,root-login:,root-sshkey:"
 
 #database keys
 longopts="$longopts,init,db-file:,db-scheme:"
@@ -1491,6 +1637,7 @@ longopts="$longopts,udr-id:,udr-desc:,udr-btime:,udr-etime:,udr-tsn-id:"
 longopts="$longopts,show-uur-map,show-ddr-map,show-ud-map"
 
 #executions
+longopts="$longopts,pretend"
 longopts="$longopts,exec-scnA"
 
 t=$(getopt -o $shortopts --long $longopts -n 'yasim' -- "$@")
@@ -1502,6 +1649,7 @@ eval set -- "$t"
 while true ; do
 	case "$1" in
 		-h|--help) help_usage ; break ;;
+		--keys-repo) keys_repo=$2; shift 2;;
 		--root-login) root_login=$2; shift 2;;
 		--root-sshkey) root_sshkey=$2; shift 2;;
 		--db-scheme) db_scheme=$2; shift 2;;
@@ -1647,6 +1795,7 @@ while true ; do
 		--show-uur-map) show_uur_map=1; shift ;;
 		--show-ddr-map) show_ddr_map=1; shift ;;
 		--show-ud-map) show_ud_map=1; shift ;;
+		--pretend) pretend=1; shift ;;
 		--exec-scnA) exec_scnA=1; shift ;;
 		--) shift ; break ;;
 		*) echo "Internal error!" ; exit 1 ;;
