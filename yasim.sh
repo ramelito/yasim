@@ -204,6 +204,8 @@ Additional show stuff
 
 Executions
 	--pretend		show what will do without actual write actions
+	--exec-scnA		removing users from devices
+	--exec-scnB		add new users on devices
 "
 }
 
@@ -1400,50 +1402,6 @@ get_dev_uns () {
         sqlite3 $db_file "$q"
 }
 
-get_usr_dl () {
-	echo ""
-}
-
-rm_usrs_on_dev () {
-
-	check_root_ssh
-	[ "X$1" == "X" ] && exit 1 || dev_name1=$1
-
-	#get list of users from db
-	fromdb1=$(mktemp)
-	get_dev_uns $dev_name1 > $fromdb1
-
-	#get passwd file from dev1
-	passwd1=$(mktemp)
-	scp $scpopts$dev_name1:/etc/passwd $passwd1
-		
-	#check retrieved passwd is not empty
-	if [ ! -s $passwd1 ]; then
-		rm $passwd1
-		echo "Could not retreive passwd file from $dev_name1. Skipping $dev_name1."
-		continue
-	fi
-		
-	#sedding retrieved passwd with known user list (root, daemon, etc...)
-	fromserver1=$(mktemp)
-	fromserver2=$(mktemp)
-	cat $passwd1 | cut -d: -f1 > $fromserver1
-	./knownusers.sed $fromserver1 > $fromserver2
-
-	#get list of users on serverside to delete
-	userdeletelist1=$(mktemp)
-	sort $fromserver2 $fromdb1 $fromdb1 | uniq -u > $userdeletelist1
-
-	#read user delete list and perform user remove on the server (device specific)
-	while read serveruser1; do
-
-		echo "Deleting $serveruser1 from $dev_name1."
-		[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 sudo deluser $serveruser1
-		
-	done < $userdeletelist1
-	rm $fromdb1 $passwd1 $fromserver1 $fromserver2 $userdeletelist1
-}
-
 get_usr_pass () {
 
         check_ns
@@ -1457,27 +1415,75 @@ get_usr_pass () {
 	q="$q and usr_name='$usr_from_db1'"
 	q="$q limit 1"
         sqlite3 $db_file "$q"
-
-}
-
-get_passwd () {
-
-	check_root_ssh
-	test "X$1" == "X" && exit 1 || local dev_name1=$1
-	test -e "$2" && local passwd1=$2 || exit 1
-
-	#get passwd file from dev1
-	scp $scpopts$dev_name1:/etc/passwd $passwd1
 }
 
 chk_usr_on_dev () {
 
 	check_root_ssh
+	check_keys_repo
+
 	test "X$1" == "X" && exit 1 || local dev_name1=$1
 	test "X$2" == "X" && exit 1 || local usr_from_db1=$2
-	test -s $3 && local passwd1=$3 || exit 1
-	#TODO user checks
+	
+	local dev_role1
 
+	#check rsa_key
+	local rsakey="$keys_repo/$usr_from_db1.id_rsa.pub"
+	if [ -e "$rsakey" ] ; then
+		local rk_from_svr=$(mktemp)
+		local usr_ssh_dir="/home/$usr_from_db1/.ssh"
+		ssh $sshopts $dev_name1 "sudo mkdir -p $usr_ssh_dir"
+		ssh $sshopts $dev_name1 "sudo cat $usr_ssh_dir/authorized_keys" > $rk_from_svr
+		if diff $rsakey $rk_from_svr >/dev/null ; then
+			echo "$usr_from_db1 RSA pub key on $dev_name1 is ok."
+		else
+			echo "$usr_from_db1 RSA pub key on $dev_name1 is not ok. Fixing."
+			local exec1="cat - | sudo tee $usr_ssh_dir/authorized_keys"
+			[ "$pretend" == 1 ] || cat "$rsakey" | ssh $sshopts $dev_name1 $exec1
+		fi
+		rm $rk_from_svr
+	else
+		echo "$rsakey not found in $keys_repo."
+	fi
+
+	#check shell
+	local exec1="cat /etc/passwd | grep -w $usr_from_db1 | cut -d: -f7"
+	local usr_shell=$(ssh $sshopts $dev_name1 $exec1)
+
+	if [ "$usr_shell" == "/bin/sh" -o "$usr_shell" == "/bin/bash" ]; then
+		echo "User $usr_from_db1 shell is ok."
+	else
+		echo "User $usr_from_db1 shell is not ok. Fixing."
+		for dev_role1 in $(get_dev_roles $dev_name1); do
+			case $dev_role1 in
+				"busybox")
+					echo "Device armed with busybox utilities."
+					break
+					;;
+			esac
+
+		done
+	fi
+
+	#check password (look at shadow file)
+	local exec1="sudo cat /etc/shadow | grep -w $usr_from_db1 | cut -d: -f2"
+	local usr_pass_on_svr=$(ssh $sshopts $dev_name1 $exec1)
+	local usr_pass_from_db=$(get_usr_pass $usr_from_db1)
+	if [ "$usr_pass_on_svr" == "$usr_pass_from_db" ]; then
+		echo "User $usr_from_db1 password is ok."
+	else
+		echo "User $usr_from_db1 password is not ok. Fixing."
+		for dev_role1 in $(get_dev_roles $dev_name1); do
+			case $dev_role1 in
+				"busybox")
+					echo "Device armed with busybox utilities."
+					local exec1="sudo echo '$usr_from_db1:$usr_pass_from_db' | sudo chpasswd -e"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+					break
+					;;
+			esac
+		done
+	fi
 }
 
 add_usr_on_dev () {
@@ -1487,82 +1493,134 @@ add_usr_on_dev () {
 
 	test "X$1" == "X" && exit 1 || local dev_name1=$1
 	test "X$2" == "X" && exit 1 || local usr_from_db1=$2
-	test -s $3 && local passwd1=$3 || exit 1
-	test -s $4 && local devroles1=$4 || exit 1
 	
 	echo "Check if user $usr_from_db1 exists on $dev_name1."
-
-	if [ $(grep -wc $usr_from_db1 $passwd1) -eq 1 ]; then
+	local exec1="cat /etc/passwd | grep -wc $usr_from_db1"
+	local usr_exists=$(ssh $sshopts $dev_name1 $exec1)
+	if [ $usr_exists -eq 1 ]; then
 		echo "User exists!"
-		chk_usr_on_dev $dev_name1 $usr_from_db1 $passwd1
+		chk_usr_on_dev $dev_name1 $usr_from_db1
 		return 0
 	fi
 
-	if [ $(grep -wc "tinycore" $devroles1) -eq 1 ]; then
-		echo "Device armed with tinycore OS."
-		local usr_pass=$(get_usr_pass $usr_from_db1)
-		ssh $sshopts $dev_name1 "sudo adduser -D $usr_from_db1"
-		ssh $sshopts $dev_name1 "sudo echo '$usr_from_db1:$usr_pass' | sudo chpasswd"
-		local usr_ssh_dir="/home/$usr_from_db1/.ssh"
-		ssh $sshopts $dev_name1 "sudo mkdir -p $usr_ssh_dir"
-		local rsakey="$keys_repo/$usr_from_db1.id_rsa.pub"
-		if [ -e "$rsakey" ] ; then
-			cat "$rsakey" | ssh $sshopts $dev_name1 "sudo cat - | sudo tee $usr_ssh_dir/autorized_keys"
-		else
-			echo "$rsakey does not exist!"
-		fi
-	fi
+	local usr_pass=$(get_usr_pass $usr_from_db1)
+	local usr_ssh_dir="/home/$usr_from_db1/.ssh"
+	local rsakey="$keys_repo/$usr_from_db1.id_rsa.pub"
 
-	if [ $(grep -wc "ubuntu" $devroles1) -eq 1 ]; then
-		echo "Device armed with Ununtu OS."
-	fi
+	local dev_role1
+
+	for dev_role1 in $(get_dev_roles $dev_name1); do
+		case "$dev_role1" in
+			"busybox")
+				echo "Device armed with busybox utilities."
+				local exec1="sudo adduser -D $usr_from_db1"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+				local exec1="sudo echo '$usr_from_db1:$usr_pass' | sudo chpasswd -e"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+				local exec1="sudo mkdir -p $usr_ssh_dir"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+				if [ -e "$rsakey" ] ; then
+					local exec1="cat - | sudo tee $usr_ssh_dir/authorized_keys"
+					[ "$pretend" == 1 ] || cat "$rsakey" | ssh $sshopts $dev_name1 $exec1
+				else
+					echo "$rsakey not found in $keys_repo."
+				fi
+				break
+				;;
+		esac
+	done
 }
-
 
 add_usrs_on_dev () {
 
 	[ "X$1" == "X" ] && exit 1 || local dev_name1=$1
 
-	#get passwd file from server
-	echo "Get passwd file from $dev_name1."
-	passwd1=$(mktemp)
-	get_passwd $dev_name1 $passwd1
+	#get list of users from db
+	echo "Get user list for $dev_name1 from db."
+	local usrs_from_db1=$(get_dev_uns $dev_name1)
+	echo $usrs_from_db1
+	
 
-	if [ ! -s $passwd1 ]; then
-		echo "Failed to get passwd. Skipping $dev_name1."
-		rm $passwd1
-		return 1
-	fi
+	#add users on device one by one
+	local usr_from_db1
+	for usr_from_db1 in $usrs_from_db1; do	
+		echo "Add $usr_from_db1 to $dev_name1."
+		add_usr_on_dev $dev_name1 $usr_from_db1
+	done
+
+}
+
+rm_usr_on_dev () {
+
+	check_root_ssh
+	[ "X$1" == "X" ] && exit 1 || local dev_name1=$1
+	[ "X$2" == "X" ] && exit 1 || local usr_to_rm1=$2
+
+	local dev_role1
+	for dev_role1 in $(get_dev_roles $dev_name1); do
+		case $dev_role1 in
+			"busybox")
+				echo "Device armed with busybox utilities."
+				local exec1="sudo deluser $usr_to_rm1; sudo rm -r /home/$usr_to_rm1"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+				break
+				;;
+		esac
+	done
+}
+
+rm_usrs_on_dev () {
+
+	check_root_ssh
+	[ "X$1" == "X" ] && exit 1 || local dev_name1=$1
 
 	#get list of users from db
 	echo "Get user list for $dev_name1 from db."
-	fromdb1=$(mktemp)
-	get_dev_uns $dev_name1 > $fromdb1
-	
-	#get device roles from db
-	echo "Get device roles for $dev_name1 from db."
-	devroles1=$(mktemp)
-	get_dev_roles $dev_name1 > $devroles1
+	local usrs_from_db1=$(mktemp)
+	get_dev_uns $dev_name1 > $usrs_from_db1
 
-	#add users on device one by one
-	while read usr_from_db1; do
-	
-		echo "Add $usr_from_db1 to $dev_name1."
-		add_usr_on_dev $dev_name1 $usr_from_db1 $passwd1 $devroles1
+	#sedding retrieved passwd with known user list (root, daemon, etc...)
+	usrs_from_svr1=$(mktemp)
+	usrs_from_svr2=$(mktemp)
+	local exec1="cat /etc/passwd | cut -d: -f1"
+	ssh $sshopts $dev_name1 $exec1 > $usrs_from_svr1
+	./knownusers.sed $usrs_from_svr1 > $usrs_from_svr2
+	rm $usrs_from_svr1
 
-	done < $fromdb1
+	#get list of users on serverside to delete
+	local usr_rm_lst1=$(sort $usrs_from_svr2 $usrs_from_db1 $usrs_from_db1 | uniq -u)
 
-	rm $devroles1 $fromdb1 $passwd1
+	#read user delete list and perform user remove on the server (device specific)
+	echo "User list to be removed from $dev_name1: $usr_rm_lst1"
+	local usr_to_rm1
+	for usr_to_rm1 in $usr_rm_lst1; do
+		echo "Deleting $usr_to_rm1 from $dev_name1."
+		rm_usr_on_dev $dev_name1 $usr_to_rm1
+	done
+	rm $usrs_from_db1 $usrs_from_svr2
 }
 
 exec_scnA () {
 
+	echo "Scenario A. Removing users on the devices."
 	echo "Get device list from db."
 	local dev_list1=$(get_full_dl)
-
+	echo $dev_list1
+	local dev_name1
 	for dev_name1 in $dev_list1; do
-#		rm_usrs_on_dev $dev_id1
+		echo "Let's remove users on $dev_name1."
+		rm_usrs_on_dev $dev_name1
+	done
+}
 
+exec_scnB () {
+
+	echo "Scenario B. Adding new users on the devices."
+	echo "Get device list from db."
+	local dev_list1=$(get_full_dl)
+	echo $dev_list1
+	local dev_name1
+	for dev_name1 in $dev_list1; do
 		echo "Let's add users on $dev_name1."
 		add_usrs_on_dev $dev_name1
 	done
@@ -1638,7 +1696,7 @@ longopts="$longopts,show-uur-map,show-ddr-map,show-ud-map"
 
 #executions
 longopts="$longopts,pretend"
-longopts="$longopts,exec-scnA"
+longopts="$longopts,exec-scnA,exec-scnB"
 
 t=$(getopt -o $shortopts --long $longopts -n 'yasim' -- "$@")
 
@@ -1797,6 +1855,7 @@ while true ; do
 		--show-ud-map) show_ud_map=1; shift ;;
 		--pretend) pretend=1; shift ;;
 		--exec-scnA) exec_scnA=1; shift ;;
+		--exec-scnB) exec_scnB=1; shift ;;
 		--) shift ; break ;;
 		*) echo "Internal error!" ; exit 1 ;;
 	esac
@@ -1974,3 +2033,5 @@ done
 #executions
 
 [ "$exec_scnA" == 1 ] && exec_scnA
+
+[ "$exec_scnB" == 1 ] && exec_scnB
