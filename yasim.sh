@@ -1417,16 +1417,108 @@ get_usr_pass () {
         sqlite3 $db_file "$q"
 }
 
-chk_usr_on_dev () {
+get_ug_on_dev () {
+
+        check_ns
+	[ "X$1" == "X" ] && exit 1 || local usr_name1=$1
+	[ "X$2" == "X" ] && exit 1 || local dev_name1=$2
+
+        q="select user_groups.ug_name"
+        q="$q from udr_map"
+	q="$q left join ur_ug_map on udr_map.ur_id=ur_ug_map.ur_id"
+        q="$q left join user_roles on ur_ug_map.ur_id=user_roles.ur_id"
+	q="$q left join user_groups on ur_ug_map.ug_id=user_groups.ug_id"
+	q="$q left join ug_usr_map on ur_ug_map.ug_id=ug_usr_map.ug_id"
+	q="$q left join users on ug_usr_map.usr_id=users.usr_id"
+        q="$q left join dr_dg_map on udr_map.dr_id=dr_dg_map.dr_id"
+	q="$q left join device_roles on dr_dg_map.dr_id=device_roles.dr_id"
+	q="$q left join device_groups on dr_dg_map.dg_id=device_groups.dg_id"
+	q="$q left join dg_dev_map on dr_dg_map.dg_id=dg_dev_map.dg_id"
+	q="$q left join devices on dg_dev_map.dev_id=devices.dev_id"
+        q="$q where udr_map.id not in"
+        q="$q (select id from udr_exp)"
+	q="$q and ur_ug_map.id not in"
+	q="$q (select id from urg_exp)"
+	q="$q and user_roles.id not in"
+	q="$q (select id from ur_exp)"
+	q="$q and user_groups.id not in"
+	q="$q (select id from ug_exp)"
+	q="$q and ug_usr_map.id not in"
+	q="$q (select id from uug_exp)"
+	q="$q and users.id not in"
+	q="$q (select id from usr_exp)"
+	q="$q and dr_dg_map.id not in"
+	q="$q (select id from drg_exp)"
+	q="$q and device_roles.id not in"
+	q="$q (select id from dr_exp)"
+	q="$q and device_groups.id not in"
+	q="$q (select id from dg_exp)"
+	q="$q and dg_dev_map.id not in"
+	q="$q (select id from ddg_exp)"
+	q="$q and devices.id not in"
+	q="$q (select id from dev_exp)"
+	q="$q and udr_map.udr_btime < datetime('now','localtime')"
+	q="$q and ur_ug_map.urg_btime < datetime('now','localtime')"
+	q="$q and user_roles.ur_btime < datetime('now','localtime')"
+	q="$q and user_groups.ug_btime < datetime('now','localtime')"
+	q="$q and ug_usr_map.uug_btime < datetime('now','localtime')"
+	q="$q and users.usr_btime < datetime('now','localtime')"
+	q="$q and dr_dg_map.drg_btime < datetime('now','localtime')"
+	q="$q and device_roles.dr_btime < datetime('now','localtime')"
+	q="$q and device_groups.dg_btime < datetime('now','localtime')"
+	q="$q and dg_dev_map.ddg_btime < datetime('now','localtime')"
+	q="$q and devices.dev_btime < datetime('now','localtime')"
+        q="$q and udr_map.ns_id=$ns_id"
+        q="$q and ur_ug_map.ns_id=$ns_id"
+        q="$q and user_roles.ns_id=$ns_id"
+        q="$q and user_groups.ns_id=$ns_id"
+        q="$q and ug_usr_map.ns_id=$ns_id"
+        q="$q and users.ns_id=$ns_id"
+        q="$q and dr_dg_map.ns_id=$ns_id"
+        q="$q and device_roles.ns_id=$ns_id"
+        q="$q and device_groups.ns_id=$ns_id"
+        q="$q and dg_dev_map.ns_id=$ns_id"
+        q="$q and devices.ns_id=$ns_id"
+	q="$q and devices.dev_name='$dev_name1'"
+	q="$q and users.usr_name='$usr_name1'"
+	#q="$q group by users.usr_name"
+        sqlite3 $db_file "$q"
+}
+
+get_usr_rls_in_grp () {
+
+        check_ns
+	[ "X$1" == "X" ] && exit 1 || local grp_name1=$1
+
+	q="select user_roles.ur_name"
+	q="$q from user_roles"
+	q="$q left join ur_ug_map on user_roles.ur_id=ur_ug_map.ur_id"
+	q="$q left join user_groups on ur_ug_map.ug_id=user_groups.ug_id"
+	q="$q where ur_ug_map.id not in"
+        q="$q (select id from urg_exp)"
+	q="$q and user_groups.id not in"
+	q="$q (select id from ug_exp)"
+	q="$q and user_roles.id not in"
+	q="$q (select id from ur_exp)"
+	q="$q and ur_ug_map.urg_btime < datetime('now','localtime')"
+	q="$q and user_roles.ur_btime < datetime('now','localtime')"
+	q="$q and user_groups.ug_btime < datetime('now','localtime')"
+        q="$q and ur_ug_map.ns_id=$ns_id"
+        q="$q and user_roles.ns_id=$ns_id"
+        q="$q and user_groups.ns_id=$ns_id"
+	q="$q and user_groups.ug_name='$grp_name1'"
+        sqlite3 $db_file "$q"
+}
+
+chk_rsa () {
 
 	check_root_ssh
 	check_keys_repo
 
 	test "X$1" == "X" && exit 1 || local dev_name1=$1
 	test "X$2" == "X" && exit 1 || local usr_from_db1=$2
-	
-	local dev_role1
 
+	local exec1
 	#check rsa_key
 	local rsakey="$keys_repo/$usr_from_db1.id_rsa.pub"
 	if [ -e "$rsakey" ] ; then
@@ -1445,7 +1537,16 @@ chk_usr_on_dev () {
 	else
 		echo "$rsakey not found in $keys_repo."
 	fi
+}
 
+chk_shell () {
+
+	check_root_ssh
+
+	test "X$1" == "X" && exit 1 || local dev_name1=$1
+	test "X$2" == "X" && exit 1 || local usr_from_db1=$2
+
+	local exec1
 	#check shell
 	local exec1="cat /etc/passwd | grep -w $usr_from_db1 | cut -d: -f7"
 	local usr_shell=$(ssh $sshopts $dev_name1 $exec1)
@@ -1464,26 +1565,108 @@ chk_usr_on_dev () {
 
 		done
 	fi
+}
 
+chk_pass () {
+
+	check_root_ssh
+
+	test "X$1" == "X" && exit 1 || local dev_name1=$1
+	test "X$2" == "X" && exit 1 || local usr_from_db1=$2
+
+	local exec1
+	local usr_pass_on_svr
+	local usr_pass_from_db
 	#check password (look at shadow file)
-	local exec1="sudo cat /etc/shadow | grep -w $usr_from_db1 | cut -d: -f2"
-	local usr_pass_on_svr=$(ssh $sshopts $dev_name1 $exec1)
-	local usr_pass_from_db=$(get_usr_pass $usr_from_db1)
+	exec1="sudo cat /etc/shadow | grep -w $usr_from_db1 | cut -d: -f2"
+	usr_pass_on_svr=$(ssh $sshopts $dev_name1 $exec1)
+	usr_pass_from_db=$(get_usr_pass $usr_from_db1)
 	if [ "$usr_pass_on_svr" == "$usr_pass_from_db" ]; then
 		echo "User $usr_from_db1 password is ok."
 	else
 		echo "User $usr_from_db1 password is not ok. Fixing."
 		for dev_role1 in $(get_dev_roles $dev_name1); do
 			case $dev_role1 in
-				"busybox")
-					echo "Device armed with busybox utilities."
-					local exec1="sudo echo '$usr_from_db1:$usr_pass_from_db' | sudo chpasswd -e"
+				"*")
+					exec1="sudo echo '$usr_from_db1:$usr_pass_from_db' | sudo chpasswd -e"
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 					break
 					;;
 			esac
 		done
 	fi
+}
+
+chk_su () {
+
+	check_root_ssh
+
+	test "X$1" == "X" && exit 1 || local dev_name1=$1
+	test "X$2" == "X" && exit 1 || local usr_from_db1=$2
+
+	local exec1
+	local dev_role1
+	local usr_grp1
+	local usr_roles1
+
+	#here we get groups connected to dev through roles
+	#and then get roles list for the user-dev pair
+	for usr_grp1 in $(get_ug_on_dev $usr_from_db1 $dev_name1); do
+		usr_rls1="$usr_roles1 $(get_usr_rls_in_grp $usr_grp1)"
+	done
+
+	#check superuser ability
+	[ "$(grep -wc superuser <<< $usr_rls1)" == 1 ]  && is_dsu1=1 || is_dsu1=0
+
+	exec1="sudo cat /etc/group | grep -w wheel | grep -wc $usr_from_db1"
+	[ "$(ssh $sshopts $dev_name1 $exec1)" == 1 ] && is_ssu1=1 || is_ssu1=0
+
+	if [ "$is_dsu1" == 1 -a "$is_dsu1" != "$is_ssu1" ]; then
+		echo "User $usr_from_db1 should be superuser on $dev_name1 but he is not."
+		for usr_role1 in $usr_rls1; do
+			for dev_role1 in $(get_dev_roles $dev_name1); do
+				case "${usr_role1}_${dev_role1}" in
+					"superuser_busybox")
+						exec1="sudo addgroup $usr_from_db1 wheel"
+						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+						;;
+					"superuser_ubuntu")
+						exec1="sudo adduser $usr_from_db1 wheel"
+						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+						;;
+				esac
+			done
+		done
+	fi
+
+	if [ "$is_dsu1" == 0 -a "$is_dsu1" != "$is_ssu1" ]; then
+		echo "User $usr_from_db1 should not be superuser on $dev_name1 but he is."
+		for usr_role1 in $usr_rls1; do
+			for dev_role1 in $(get_dev_roles $dev_name1); do
+				case "${usr_role1}_${dev_role1}" in
+					"superuser_busybox")
+						exec1="sudo delgroup $usr_from_db1 wheel"
+						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+						;;
+					"superuser_ubuntu")
+						exec1="sudo deluser $usr_from_db1 wheel"
+						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+						;;
+				esac
+			done
+		done
+	fi
+}
+
+chk_usr_on_dev () {
+
+	test "X$1" == "X" && exit 1 || local dev_name1=$1
+	test "X$2" == "X" && exit 1 || local usr_from_db1=$2
+
+	chk_rsa $dev_name1 $usr_from_db1
+	chk_shell $dev_name1 $usr_from_db1
+	chk_pass $dev_name1 $usr_from_db1
+	chk_su $dev_name1 $usr_from_db1
 }
 
 add_usr_on_dev () {
@@ -1508,26 +1691,65 @@ add_usr_on_dev () {
 	local rsakey="$keys_repo/$usr_from_db1.id_rsa.pub"
 
 	local dev_role1
+	local usr_grp1
+	local usr_rls1
+	local usr_role1
+	local usr_added=0
+	local exec1
 
 	for dev_role1 in $(get_dev_roles $dev_name1); do
 		case "$dev_role1" in
 			"busybox")
 				echo "Device armed with busybox utilities."
-				local exec1="sudo adduser -D $usr_from_db1"
+				exec1="sudo adduser -D $usr_from_db1"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
-				local exec1="sudo echo '$usr_from_db1:$usr_pass' | sudo chpasswd -e"
+				usr_added=1
+				break
+				;;
+			"ubuntu")
+				echo "Device armed with ubuntu utilities."
+				exec1="sudo adduser $usr_from_db1"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
-				local exec1="sudo mkdir -p $usr_ssh_dir"
-				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
-				if [ -e "$rsakey" ] ; then
-					local exec1="cat - | sudo tee $usr_ssh_dir/authorized_keys"
-					[ "$pretend" == 1 ] || cat "$rsakey" | ssh $sshopts $dev_name1 $exec1
-				else
-					echo "$rsakey not found in $keys_repo."
-				fi
+				usr_added=1
 				break
 				;;
 		esac
+	done
+
+	[ "$usr_added" == 1 ] || return 0
+
+	exec1="sudo echo '$usr_from_db1:$usr_pass' | sudo chpasswd -e"
+	[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+	exec1="sudo mkdir -p $usr_ssh_dir"
+	[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+	if [ -e "$rsakey" ] ; then
+		local exec1="cat - | sudo tee $usr_ssh_dir/authorized_keys"
+		[ "$pretend" == 1 ] || cat "$rsakey" | ssh $sshopts $dev_name1 $exec1
+	else
+		echo "$rsakey not found in $keys_repo."
+	fi
+	
+	#here we get groups connected to dev through roles
+	#and then get roles list for the user-dev pair
+	for usr_grp1 in $(get_ug_on_dev $usr_from_db1 $dev_name1); do
+		usr_rls1="$usr_roles1 $(get_usr_rls_in_grp $usr_grp1)"
+	done
+
+	for usr_role1 in $usr_rls1; do
+		for dev_role1 in $(get_dev_roles $dev_name1); do
+			case "${usr_role1}_${dev_role1}" in
+				"superuser_busybox")
+					echo "User $usr_from_db1 should be a su on $dev_name1 (busybox)."
+					exec1="sudo addgroup $usr_from_db1 wheel"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+					;;
+				"superuser_ubuntu")
+					echo "User $usr_from_db1 should be a su on $dev_name1 (ubuntu)."
+					exec1="sudo adduser $usr_from_db1 wheel"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+					;;
+			esac
+		done
 	done
 }
 
@@ -1547,7 +1769,6 @@ add_usrs_on_dev () {
 		echo "Add $usr_from_db1 to $dev_name1."
 		add_usr_on_dev $dev_name1 $usr_from_db1
 	done
-
 }
 
 rm_usr_on_dev () {
@@ -1557,11 +1778,11 @@ rm_usr_on_dev () {
 	[ "X$2" == "X" ] && exit 1 || local usr_to_rm1=$2
 
 	local dev_role1
+	local exec1
 	for dev_role1 in $(get_dev_roles $dev_name1); do
 		case $dev_role1 in
-			"busybox")
-				echo "Device armed with busybox utilities."
-				local exec1="sudo deluser $usr_to_rm1; sudo rm -r /home/$usr_to_rm1"
+			"*")
+				exec1="sudo deluser $usr_to_rm1; sudo rm -r /home/$usr_to_rm1"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 				break
 				;;
