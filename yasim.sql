@@ -43,7 +43,6 @@ CREATE TABLE IF NOT EXISTS users (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
 usr_id INTEGER NOT NULL,
 usr_name VARCHAR( 255 )  NOT NULL,
-usr_pass TEXT NOT NULL,
 usr_btime DATETIME NOT NULL,
 ns_id REFERENCES namespaces (ns_id)
 );
@@ -69,6 +68,34 @@ usr_id REFERENCES users (usr_id)
 CREATE TABLE IF NOT EXISTS ui_exp (
 ui_etime DATETIME NOT NULL,
 id REFERENCES user_info (id)
+);
+
+CREATE TABLE IF NOT EXISTS services (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+svc_id INTEGER NOT NULL,
+svc_name VARCHAR( 255 )  NOT NULL,
+svc_desc TEXT NOT NULL,
+svc_btime DATETIME NOT NULL,
+ns_id REFERENCES namespaces (ns_id)
+);
+
+CREATE TABLE IF NOT EXISTS svc_exp (
+svc_etime DATETIME NOT NULL,
+id REFERENCES services (id)
+);
+
+CREATE TABLE IF NOT EXISTS svc_upass (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+sup_enc TEXT NOT NULL,
+sup_btime DATETIME NOT NULL,
+svc_id REFERENCES services (svc_id),
+usr_id REFERENCES users (usr_id),
+ns_id REFERENCES namespaces (ns_id)
+);
+
+CREATE TABLE IF NOT EXISTS sup_exp (
+sup_etime DATETIME NOT NULL,
+id REFERENCES svc_upass (id)
 );
 
 CREATE TABLE IF NOT EXISTS ur_ug_map (

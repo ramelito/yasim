@@ -93,7 +93,6 @@ Users (with valid ns-id)
         --show-expired-usr       show expired users
         --usr-id                 user id (mandatory)
         --usr-name               user name (mandatory)
-        --usr-pass               user password (mandatory)
         --usr-btime              user begin of use time (optional)
         --usr-etime              user expire of use time (optional)
         --usr-tsn-id             user transaction id to expire (mandatory)
@@ -315,9 +314,9 @@ show_active_ns () {
 
 show_expired_ns () {
 
-	local q="select * from namespaces, ns_exp"
-	q="$q where namespaces.id in (select id from ns_exp)"
-	q="$q and ns_exp.ns_etime < datetime('now','localtime')"
+	local q="select * from namespaces"
+	q="$q inner join ns_exp on namespaces.id=ns_exp.id"
+	q="$q where ns_exp.ns_etime < datetime('now','localtime')"
 	q="$q group by namespaces.id"
 	q="$q order by ns_exp.ns_etime desc"
 	sqlite3 $sqlite3opts $db_file "$q"
@@ -368,9 +367,9 @@ show_active_ur () {
 show_expired_ur () {
 
 	check_ns
-        local q="select * from user_roles, ur_exp"
-        q="$q where user_roles.id in (select id from ur_exp)"
-	q="$q and ur_exp.ur_etime < datetime('now','localtime')"
+        local q="select * from user_roles"
+	q="$q inner join ur_exp on ur_exp.id=user_roles.id"
+	q="$q where ur_exp.ur_etime < datetime('now','localtime')"
 	q="$q and user_roles.ns_id=$ns_id"
 	q="$q group by user_roles.id"
         q="$q order by ur_exp.ur_etime desc"
@@ -423,9 +422,9 @@ show_active_ug () {
 show_expired_ug () {
 
         check_ns
-        local q="select * from user_groups, ug_exp"
-        q="$q where user_groups.id in (select id from ug_exp)"
-        q="$q and ug_exp.ug_etime < datetime('now','localtime')"
+        local q="select * from user_groups"
+	q="$q inner join ug_exp on ug_exp.id=user_groups.id"
+        q="$q where ug_exp.ug_etime < datetime('now','localtime')"
         q="$q and user_groups.ns_id=$ns_id"
 	q="$q group by user_groups.id"
         q="$q order by ug_exp.ug_etime desc"
@@ -502,11 +501,11 @@ show_expired_urg () {
 	local q="select ur_ug_map.id, ur_ug_map.urg_id, ur_ug_map.ug_id, ur_ug_map.ur_id,"
 	q="$q ur_ug_map.urg_btime, ur_ug_map.ns_id,"
 	q="$q user_groups.ug_name, user_roles.ur_name, urg_exp.urg_etime"
-	q="$q from ur_ug_map, urg_exp"
+	q="$q from ur_ug_map"
+	q="$q inner join urg_exp on urg_exp.id=ur_ug_map.id"
 	q="$q left join user_groups on ur_ug_map.ug_id=user_groups.ug_id"
 	q="$q left join user_roles on ur_ug_map.ur_id=user_roles.ur_id"
-        q="$q where ur_ug_map.id in (select id from urg_exp)"
-        q="$q and ur_ug_map.urg_btime < datetime('now','localtime')"
+        q="$q where ur_ug_map.urg_btime < datetime('now','localtime')"
         q="$q and ur_ug_map.ns_id=$ns_id"
         q="$q and user_groups.ns_id=$ns_id"
         q="$q and user_roles.ns_id=$ns_id"
@@ -522,10 +521,9 @@ add_usr () {
         check_ns
         [ "X$usr_id" == "X" ] && exit 1
         [ "X$usr_name" == "X" ] && exit 1
-        [ "X$usr_pass" == "X" ] && exit 1
         [ "X$usr_btime" == "X" ] && usr_btime=$(date "+%Y-%m-%d %H:%M:%S")
-        q="insert or rollback into users (usr_id,usr_name,usr_pass,usr_btime,ns_id)"
-        q="$q values ($usr_id,'$usr_name','$usr_pass','$usr_btime',$ns_id);"
+        q="insert or rollback into users (usr_id,usr_name,usr_btime,ns_id)"
+        q="$q values ($usr_id,'$usr_name','$usr_btime',$ns_id);"
         sqlite3 $sqlite3opts $db_file "$q"
 
 }
@@ -568,10 +566,10 @@ show_active_usr () {
 show_expired_usr () {
 
         check_ns
-        local q="select * from users, ui_exp, usr_exp"
+        local q="select * from users"
+	q="$q inner join usr_exp on usr_exp.id=users.id"
         q="$q left join user_info on users.usr_id=user_info.usr_id"
-        q="$q where users.id in (select id from usr_exp)"
-        q="$q and usr_exp.usr_etime < datetime('now','localtime')"
+        q="$q where usr_exp.usr_etime < datetime('now','localtime')"
         q="$q and users.ns_id=$ns_id"
         q="$q and user_info.ns_id=$ns_id"
         q="$q order by usr_exp.usr_etime desc"
@@ -628,14 +626,145 @@ show_active_ui () {
 show_expired_ui () {
 
         check_ns
-        local q="select user_info.*, ui_exp.ui_etime from user_info, ui_exp"
-        q="$q where user_info.id in (select id from ui_exp)"
-        q="$q and ui_exp.ui_etime < datetime('now','localtime')"
+        local q="select user_info.*, ui_exp.ui_etime from user_info"
+	q="$q inner join ui_exp on ui_exp.id=user_info.id"
+        q="$q where ui_exp.ui_etime < datetime('now','localtime')"
         q="$q and user_info.ns_id=$ns_id"
         q="$q order by ui_exp.ui_etime desc"
         sqlite3 $sqlite3opts $db_file "$q"
 }
 
+#Services funcs
+
+add_svc () {
+
+        check_ns
+        [ "X$svc_id" == "X" ] && exit 1
+        [ "X$svc_name" == "X" ] && exit 1
+        [ "X$svc_desc" == "X" ] && exit 1
+        [ "X$svc_btime" == "X" ] && svc_btime=$(date "+%Y-%m-%d %H:%M:%S")
+        local q="insert or rollback into services (svc_id,svc_name,svc_desc,svc_btime,ns_id)"
+        q="$q values ($svc_id,'$svc_name','$svc_desc','$svc_btime',$ns_id);"
+        sqlite3 $sqlite3opts $db_file "$q"
+
+}
+
+expire_svc () {
+
+        [ "X$svc_tsn_id" == "X" ] && exit 1
+        [ "X$svc_etime" == "X" ] && svc_etime=$(date "+%Y-%m-%d %H:%M:%S")
+        local q="insert or rollback into svc_exp (id,svc_etime) values ($svc_tsn_id,'$svc_etime');"
+        sqlite3 $sqlite3opts $db_file "$q"
+
+}
+
+show_all_svc () {
+
+        check_ns
+        local q="select * from services"
+	q="$q where services.ns_id=$ns_id"
+	q="$q order by services.svc_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_active_svc () {
+
+        check_ns
+        local q="select * from services"
+        q="$q where services.id not in (select id from svc_exp)"
+        q="$q and services.svc_btime < datetime('now','localtime')"
+        q="$q and services.ns_id=$ns_id"
+        q="$q order by services.svc_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_expired_svc () {
+
+        check_ns
+        local q="select * from services"
+	q="$q inner join svc_exp on svc_exp.id=services.id"
+        q="$q and svc_exp.svc_etime < datetime('now','localtime')"
+        q="$q and services.ns_id=$ns_id"
+        q="$q order by svc_exp.svc_etime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+#Service user passes funcs
+
+add_sup () {
+
+        check_ns
+        [ "X$sup_enc" == "X" ] && exit 1
+        [ "X$svc_id" == "X" ] && exit 1
+        [ "X$usr_id" == "X" ] && exit 1
+        [ "X$sup_btime" == "X" ] && sup_btime=$(date "+%Y-%m-%d %H:%M:%S")
+        local q="insert or rollback into svc_upass (sup_enc,sup_btime,usr_id,svc_id,ns_id)"
+        q="$q values ('$sup_enc','$sup_btime',$usr_id,$svc_id,$ns_id);"
+        sqlite3 $sqlite3opts $db_file "$q"
+
+}
+
+expire_sup () {
+
+        [ "X$sup_tsn_id" == "X" ] && exit 1
+        [ "X$sup_etime" == "X" ] && sup_etime=$(date "+%Y-%m-%d %H:%M:%S")
+        local q="insert or rollback into sup_exp (id,sup_etime) values ($sup_tsn_id,'$sup_etime');"
+        sqlite3 $sqlite3opts $db_file "$q"
+
+}
+
+show_all_sup () {
+
+        check_ns
+        local q="select svc_upass.*,services.svc_name, users.usr_name"
+	q="$q from svc_upass"
+	q="$q left join services on services.svc_id=svc_upass.svc_id"
+	q="$q left join users on users.usr_id=svc_upass.usr_id"
+	q="$q where svc_upass.ns_id=$ns_id"
+	q="$q and services.ns_id=$ns_id"
+	q="$q and users.ns_id=$ns_id"
+	q="$q group by svc_upass.id"
+	q="$q order by svc_upass.sup_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_active_sup () {
+
+        check_ns
+        local q="select svc_upass.*, services.svc_name, users.usr_name"
+	q="$q from svc_upass"
+	q="$q left join services on services.svc_id=svc_upass.svc_id"
+	q="$q left join users on users.usr_id=svc_upass.usr_id"
+        q="$q where svc_upass.id not in (select id from sup_exp)"
+        q="$q and services.id not in (select id from svc_exp)"
+        q="$q and users.id not in (select id from usr_exp)"
+        q="$q and svc_upass.sup_btime < datetime('now','localtime')"
+        q="$q and services.svc_btime < datetime('now','localtime')"
+        q="$q and users.usr_btime < datetime('now','localtime')"
+        q="$q and svc_upass.ns_id=$ns_id"
+	q="$q and services.ns_id=$ns_id"
+	q="$q and users.ns_id=$ns_id"
+        q="$q order by svc_upass.sup_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_expired_sup () {
+
+        check_ns
+        local q="select svc_upass.*, sup_exp.sup_etime, services.svc_name,"
+	q="$q users.usr_name"
+	q="$q from svc_upass"
+	q="$q inner join sup_exp on sup_exp.id=svc_upass.id"
+	q="$q left join services on services.svc_id=svc_upass.svc_id"
+	q="$q left join users on users.usr_id=svc_upass.usr_id"
+        q="$q where sup_exp.sup_etime < datetime('now','localtime')"
+        q="$q and svc_upass.ns_id=$ns_id"
+	q="$q and services.ns_id=$ns_id"
+	q="$q and users.ns_id=$ns_id"
+	q="$q group by svc_upass.id"
+        q="$q order by sup_exp.sup_etime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
 #User and group binding funcs
 
 add_uug () {
@@ -706,11 +835,11 @@ show_expired_uug () {
         local q="select ug_usr_map.id, ug_usr_map.uug_id, ug_usr_map.ug_id, ug_usr_map.usr_id,"
         q="$q ug_usr_map.uug_btime, ug_usr_map.ns_id,"
         q="$q users.usr_name, user_groups.ug_name, uug_exp.uug_etime "
-        q="$q from ug_usr_map, uug_exp"
+        q="$q from ug_usr_map"
+	q="$q inner join uug_exp on uug_exp.id=ug_usr_map.id"
         q="$q left join user_groups on ug_usr_map.ug_id=user_groups.ug_id"
         q="$q left join users on ug_usr_map.usr_id=users.usr_id"
-        q="$q where ug_usr_map.id in (select id from uug_exp)"
-        q="$q and ug_usr_map.uug_btime < datetime('now','localtime')"
+        q="$q where ug_usr_map.uug_btime < datetime('now','localtime')"
         q="$q and ug_usr_map.ns_id=$ns_id"
         q="$q and user_groups.ns_id=$ns_id"
         q="$q and users.ns_id=$ns_id"
@@ -765,9 +894,9 @@ show_expired_dr () {
 
         check_ns
         local q="select device_roles.*, dr_exp.dr_etime"
-	q="$q from device_roles, dr_exp"
-        q="$q where device_roles.id in (select id from dr_exp)"
-        q="$q and dr_exp.dr_etime < datetime('now','localtime')"
+	q="$q from device_roles"
+	q="$q inner join dr_exp on dr_exp.id=device_roles.id"
+        q="$q where dr_exp.dr_etime < datetime('now','localtime')"
         q="$q and device_roles.ns_id=$ns_id"
         q="$q order by dr_exp.dr_etime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -819,9 +948,9 @@ show_active_dg () {
 show_expired_dg () {
 
         check_ns
-        local q="select device_groups.*, dg_exp.dg_etime from device_groups, dg_exp"
-        q="$q where id in (select id from dg_exp)"
-        q="$q and dg_exp.dg_etime < datetime('now','localtime')"
+        local q="select device_groups.*, dg_exp.dg_etime from device_groups"
+	q="$q inner join dg_exp on dg_exp.id=device_groups.id"
+        q="$q where dg_exp.dg_etime < datetime('now','localtime')"
         q="$q and device_groups.ns_id=$ns_id"
         q="$q order by dg_exp.dg_etime desc"
         sqlite3 $sqlite3opts $db_file "$q"
@@ -875,9 +1004,8 @@ show_expired_dev () {
 
         check_ns
         local q="select * from devices"
-#        q="$q left join user_info on devices.dev_id=user_info.dev_id"
-        q="$q where devices.id in (select id from dev_exp)"
-        q="$q and dev_exp.dev_etime < datetime('now','localtime')"
+	q="$q inner join dev_exp on dev_exp.id=devices.id"
+        q="$q where dev_exp.dev_etime < datetime('now','localtime')"
         q="$q and devices.ns_id=$ns_id"
         q="$q order by dev_exp.dev_etime desc"
 
@@ -952,11 +1080,11 @@ show_expired_drg () {
         local q="select dr_dg_map.id, dr_dg_map.drg_id, dr_dg_map.dg_id, dr_dg_map.dr_id,"
         q="$q dr_dg_map.drg_btime, dr_dg_map.ns_id,"
         q="$q device_groups.dg_name, device_roles.dr_name, drg_exp.drg_etime"
-        q="$q from dr_dg_map, drg_exp"
+        q="$q from dr_dg_map"
+	q="$q inner join drg_exp on dr_dg_map.id=drg_exp.id"
         q="$q left join device_groups on dr_dg_map.dg_id=device_groups.dg_id"
         q="$q left join device_roles on dr_dg_map.dr_id=device_roles.dr_id"
-        q="$q where dr_dg_map.id in (select id from drg_exp)"
-        q="$q and dr_dg_map.drg_btime < datetime('now','localtime')"
+        q="$q where dr_dg_map.drg_btime < datetime('now','localtime')"
         q="$q and dr_dg_map.ns_id=$ns_id"
         q="$q and device_roles.ns_id=$ns_id"
         q="$q and device_groups.ns_id=$ns_id"
@@ -1035,11 +1163,11 @@ show_expired_ddg () {
         local q="select dg_dev_map.id, dg_dev_map.ddg_id, dg_dev_map.dg_id, dg_dev_map.dev_id,"
         q="$q dg_dev_map.ddg_btime, dg_dev_map.ns_id,"
         q="$q devices.dev_name, device_groups.dg_name, ddg_exp.ddg_etime "
-        q="$q from dg_dev_map, ddg_exp"
+        q="$q from dg_dev_map"
+	q="$q inner join ddg_exp on ddg_exp.id=dg_dev_map.id"
         q="$q left join device_groups on dg_dev_map.dg_id=device_groups.dg_id"
         q="$q left join devices on dg_dev_map.dev_id=devices.dev_id"
-        q="$q where dg_dev_map.id in (select id from ddg_exp)"
-        q="$q and dg_dev_map.ddg_btime < datetime('now','localtime')"
+        q="$q where dg_dev_map.ddg_btime < datetime('now','localtime')"
         q="$q and dg_dev_map.ns_id=$ns_id"
         q="$q and device_groups.ns_id=$ns_id"
         q="$q and devices.ns_id=$ns_id"
@@ -1119,11 +1247,11 @@ show_expired_udr () {
         local q="select udr_map.id, udr_map.udr_id, udr_map.dr_id, udr_map.ur_id,"
         q="$q udr_map.udr_desc, udr_map.udr_btime, udr_map.ns_id,"
         q="$q device_roles.dr_name, user_roles.ur_name, udr_exp.udr_etime "
-        q="$q from udr_map, udr_exp"
+        q="$q from udr_map"
+	q="$q inner join udr_exp on udr_exp.id=udr_map.id"
         q="$q left join device_roles on udr_map.dr_id=device_roles.dr_id"
         q="$q left join user_roles on udr_map.ur_id=user_roles.ur_id"
-        q="$q where udr_map.id in (select id from udr_exp)"
-        q="$q and udr_map.udr_btime < datetime('now','localtime')"
+        q="$q where udr_map.udr_btime < datetime('now','localtime')"
         q="$q and udr_map.ns_id=$ns_id"
         q="$q and user_roles.ns_id=$ns_id"
         q="$q and device_roles.ns_id=$ns_id"
@@ -1437,14 +1565,22 @@ chk_dev () {
 get_usr_pass () {
 
         check_ns
-	test "X$1" == "X" && exit 1 || local usr_from_db1=$2
+	test "X$1" == "X" && exit 1 || local usr_from_db1=$1
 
-        local q="select usr_pass from users"
-        q="$q where id not in"
-        q="$q (select id from usr_exp)"
-        q="$q and usr_btime < datetime('now','localtime')"
-        q="$q and ns_id=$ns_id"
-	q="$q and usr_name='$usr_from_db1'"
+        local q="select sup_enc from svc_upass"
+	q="$q left join services on services.svc_id=svc_upass.svc_id"
+	q="$q left join users on users.usr_id=svc_upass.usr_id"
+        q="$q where svc_upass.id not in (select id from sup_exp)"
+	q="$q and services.id not in (select id from svc_exp)"
+	q="$q and users.id not in (select id from usr_exp)"
+        q="$q and svc_upass.sup_btime < datetime('now','localtime')"
+        q="$q and services.svc_btime < datetime('now','localtime')"
+        q="$q and users.usr_btime < datetime('now','localtime')"
+        q="$q and svc_upass.ns_id=$ns_id"
+        q="$q and services.ns_id=$ns_id"
+        q="$q and users.ns_id=$ns_id"
+	q="$q and services.svc_name='ssh'"
+	q="$q and users.usr_name='$usr_from_db1'"
 	q="$q limit 1"
         sqlite3 $db_file "$q"
 }
@@ -1866,6 +2002,8 @@ exec_scnA () {
 
 	echo "Scenario A. Removing users on the devices."
 	echo "Get device list from db."
+
+
 	local dev_list1=$(get_full_dl)
 	echo $dev_list1
 	local dev_name1
@@ -1942,12 +2080,20 @@ longopts="$longopts,urg-id:,urg-btime:,urg-etime:,urg-tsn-id:"
 
 #user keys
 longopts="$longopts,add-usr,expire-usr,show-all-usr,show-active-usr,show-expired-usr"
-longopts="$longopts,usr-id:,usr-name:,usr-pass:,usr-btime:,usr-etime:,usr-tsn-id:"
+longopts="$longopts,usr-id:,usr-name:,usr-btime:,usr-etime:,usr-tsn-id:"
 
 #user info keys
 longopts="$longopts,add-ui,expire-ui,show-all-ui,show-active-ui,show-expired-ui"
 longopts="$longopts,ui-cname:,ui-sname:,ui-company:,ui-email:,ui-phone:"
 longopts="$longopts,ui-desc:,ui-btime:,ui-etime:,ui-tsn-id:"
+
+#services keys
+longopts="$longopts,add-svc,expire-svc,show-all-svc,show-active-svc,show-expired-svc"
+longopts="$longopts,svc-id:,svc-name:,svc-desc:,svc-btime:,svc-etime:,svc-tsn-id:"
+
+#services passes for users
+longopts="$longopts,add-sup,expire-sup,show-all-sup,show-active-sup,show-expired-sup"
+longopts="$longopts,sup-enc:,sup-btime:,sup-etime:,sup-tsn-id:"
 
 #user and group bind keys
 longopts="$longopts,add-uug,expire-uug,show-all-uug,show-active-uug,show-expired-uug"
@@ -2043,7 +2189,6 @@ while true ; do
 		--show-expired-urg) show_expired_urg=1; shift;;
 		--usr-id) usr_id=$2; shift 2;;
                 --usr-name) usr_name=$2; shift 2;;
-                --usr-pass) usr_pass=$2; shift 2;;
                 --usr-btime) usr_btime=$2; shift 2;;
                 --usr-etime) usr_etime=$2; shift 2;;
                 --usr-tsn-id) usr_tsn_id=$2; shift 2;;
@@ -2066,6 +2211,26 @@ while true ; do
                 --show-all-ui) show_all_ui=1; shift;;
                 --show-active-ui) show_active_ui=1; shift;;
                 --show-expired-ui) show_expired_ui=1; shift;;
+		--svc-id) svc_id=$2; shift 2;;
+                --svc-name) svc_name=$2; shift 2;;
+                --svc-desc) svc_desc=$2; shift 2;;
+                --svc-btime) svc_btime=$2; shift 2;;
+                --svc-etime) svc_etime=$2; shift 2;;
+                --svc-tsn-id) svc_tsn_id=$2; shift 2;;
+                --add-svc) add_svc=1; shift;;
+                --expire-svc) expire_svc=1; shift;;
+                --show-all-svc) show_all_svc=1; shift;;
+                --show-active-svc) show_active_svc=1; shift;;
+                --show-expired-svc) show_expired_svc=1; shift;;
+		--sup-enc) sup_enc=$2; shift 2;;
+                --sup-btime) sup_btime=$2; shift 2;;
+                --sup-etime) sup_etime=$2; shift 2;;
+                --sup-tsn-id) sup_tsn_id=$2; shift 2;;
+                --add-sup) add_sup=1; shift;;
+                --expire-sup) expire_sup=1; shift;;
+                --show-all-sup) show_all_sup=1; shift;;
+                --show-active-sup) show_active_sup=1; shift;;
+                --show-expired-sup) show_expired_sup=1; shift;;
                 --uug-id) uug_id=$2; shift 2;;
                 --uug-btime) uug_btime=$2; shift 2;;
                 --uug-etime) uug_etime=$2; shift 2;;
@@ -2226,6 +2391,30 @@ chk_sw
 [ "$show_active_ui" == 1 ] && show_active_ui
 
 [ "$show_expired_ui" == 1 ] && show_expired_ui
+
+#Services block
+
+[ "$add_svc" == 1 ] && add_svc
+
+[ "$expire_svc" == 1 ] && expire_svc
+
+[ "$show_all_svc" == 1 ] && show_all_svc
+
+[ "$show_active_svc" == 1 ] && show_active_svc
+
+[ "$show_expired_svc" == 1 ] && show_expired_svc
+
+#Service user passes block
+
+[ "$add_sup" == 1 ] && add_sup
+
+[ "$expire_sup" == 1 ] && expire_sup
+
+[ "$show_all_sup" == 1 ] && show_all_sup
+
+[ "$show_active_sup" == 1 ] && show_active_sup
+
+[ "$show_expired_sup" == 1 ] && show_expired_sup
 
 #User and group binding block
 
