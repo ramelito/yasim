@@ -113,6 +113,29 @@ User info (with valid ns-id)
         --ui-etime              user info expire of use time (optional)
         --ui-tsn-id             user info transaction id to expire (mandatory)
 
+Services (with valid ns-id)
+        --add-svc                add new service
+        --expire-svc             expire existing service
+        --show-all-svc           show all services
+        --show-active-svc        show active services
+        --show-expired-svc       show expired services
+        --svc-id                 service id (mandatory)
+        --svc-name               service name (mandatory)
+        --svc-btime              service begin of use time (optional)
+        --svc-etime              service expire of use time (optional)
+        --svc-tsn-id             service transaction id to expire (mandatory)
+
+Service user passwords (with valid ns-id and svc-id)
+        --add-sup                add new service user pass
+        --expire-sup             expire existing service user pass
+        --show-all-sup           show all service user passes
+        --show-active-sup        show active service user passes
+        --show-expired-sup       show expired service user passes
+        --sup-enc                service user pass (encrypted)
+        --sup-btime              service user pass begin of use time (optional)
+        --sup-etime              service user pass expire of use time (optional)
+        --sup-tsn-id             service user pass transaction id to expire (mandatory)
+
 User and group binding (with valid ns-id, usr-id and ug-id)
         --add-uug               add bind between user and group
         --expire-uug            expire bind between user and group
@@ -1673,6 +1696,8 @@ chk_rsa () {
 	test "X$2" == "X" && exit 1 || local usr_from_db1=$2
 
 	local exec1
+	local dev_role1
+
 	#check rsa_key
 	local rsakey="$keys_repo/$usr_from_db1.id_rsa.pub"
 	if [ -e "$rsakey" ] ; then
@@ -1687,7 +1712,17 @@ chk_rsa () {
 			local exec1="cat - | sudo tee $usr_ssh_dir/authorized_keys"
 			[ "$pretend" == 1 ] || cat "$rsakey" | ssh $sshopts $dev_name1 $exec1
 		fi
+		exec1="sudo chown -R $usr_from_db1:$usr_from_db1 /home/$usr_from_db1"
+		[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 		rm $rk_from_svr
+		for dev_role1 in $(get_dev_roles $dev_name1); do
+			case $dev_role1 in
+				"orbit")
+					exec1="sudo cp -rp /home/$usr_from_db1 /non-volatile/patch/home/$usr_from_db1"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+					;;
+			esac
+		done
 	else
 		echo "$rsakey not found in $keys_repo."
 	fi
@@ -1701,6 +1736,8 @@ chk_shell () {
 	test "X$2" == "X" && exit 1 || local usr_from_db1=$2
 
 	local exec1
+	local dev_role1
+
 	#check shell
 	local exec1="cat /etc/passwd | grep -w $usr_from_db1 | cut -d: -f7"
 	local usr_shell=$(ssh $sshopts $dev_name1 $exec1)
@@ -1711,15 +1748,28 @@ chk_shell () {
 		echo "User $usr_from_db1 shell is not ok. Fixing."
 		for dev_role1 in $(get_dev_roles $dev_name1); do
 			case $dev_role1 in
-				"busybox")
-					echo "Device armed with busybox utilities."
-					echo "Not easy task. Researching..."
+				"orbit")
+					echo "Device armed with orbit utilities."
+					#first we have to lock checking files on orbit server
+					exec1="echo 1 > /tmp/check_files_lock"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+					exec1="sudo usermod -s /bin/bash $usr_from_db1"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+					#second we have to copy new files to non-volatile memory
+					exec1="sudo cp -p /etc/passwd /non-volatile/patch/etc/passwd"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+					#at last unlock checking files on orbit
+					exec1="echo 0 > /tmp/check_files_lock"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 					break
 					;;
-				"ubuntu"|"rhel"|"debian")
-					echo "Device armed with ubuntu utilities."
+				"ubuntu"|"redhat")
+					echo "Device armed with ubuntu/redhat utilities."
 					exec1="sudo usermod -s /bin/bash $usr_from_db1"
-					ssh $sshopts $dev_name1 $exec1
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 					break
 					;;
 			esac
@@ -1736,8 +1786,10 @@ chk_pass () {
 	test "X$2" == "X" && exit 1 || local usr_from_db1=$2
 
 	local exec1
+	local dev_role1
 	local usr_pass_on_svr
 	local usr_pass_from_db
+
 	#check password (look at shadow file)
 	exec1="sudo cat /etc/shadow | grep -w $usr_from_db1 | cut -d: -f2"
 	usr_pass_on_svr=$(ssh $sshopts $dev_name1 $exec1)
@@ -1748,8 +1800,25 @@ chk_pass () {
 		echo "User $usr_from_db1 password is not ok. Fixing."
 		for dev_role1 in $(get_dev_roles $dev_name1); do
 			case $dev_role1 in
-				"*")
-					exec1="sudo echo '$usr_from_db1:$usr_pass_from_db' | sudo chpasswd -e"
+				"orbit")
+					#first we have to lock checking files on orbit server
+					exec1="echo 1 > /tmp/check_files_lock"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+					exec1="sudo usermod -p $usr_pass_from_db $usr_from_db1"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+					
+					exec1="sudo cp -p /etc/shadow /non-volatile/patch/etc/shadow"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+					#at last unlock checking files on orbit
+					exec1="echo 0 > /tmp/check_files_lock"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+					break
+					;;
+				"ubuntu"|"redhat")
+					exec1="sudo usermod -p $usr_pass_from_db $usr_from_db1"
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 					break
 					;;
@@ -1787,12 +1856,25 @@ chk_su () {
 		for usr_role1 in $usr_rls1; do
 			for dev_role1 in $(get_dev_roles $dev_name1); do
 				case "${usr_role1}_${dev_role1}" in
-					"superuser_busybox")
-						exec1="sudo addgroup $usr_from_db1 wheel"
+					"superuser_orbit")
+						#first we have to lock checking files on orbit server
+						exec1="echo 1 > /tmp/check_files_lock"
+
 						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+						exec1="sudo usermod -G wheel $usr_from_db1"
+						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+						#second we have to copy new files to non-volatile memory
+						exec1="sudo cp -p /etc/group /non-volatile/patch/etc/group"
+						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+						exec1="echo 0 > /tmp/check_files_lock"
+						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+						
 						;;
-					"superuser_ubuntu")
-						exec1="sudo adduser $usr_from_db1 wheel"
+					"superuser_ubuntu"|"superuser_redhat")
+						exec1="sudo usermod -G wheel $usr_from_db1"
+						echo $exec1
 						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 						;;
 				esac
@@ -1805,12 +1887,23 @@ chk_su () {
 		for usr_role1 in $usr_rls1; do
 			for dev_role1 in $(get_dev_roles $dev_name1); do
 				case "${usr_role1}_${dev_role1}" in
-					"superuser_busybox")
-						exec1="sudo delgroup $usr_from_db1 wheel"
+					"superuser_orbit")
+						#first we have to lock checking files on orbit server
+						exec1="echo 1 > /tmp/check_files_lock"
+						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+						exec1="sudo gpasswd -d $usr_from_db1 wheel"
+						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+						#second we have to copy new files to non-volatile memory
+						exec1="sudo cp -p /etc/group /non-volatile/patch/etc/group"
+						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+						exec1="echo 0 > /tmp/check_files_lock"
 						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 						;;
-					"superuser_ubuntu")
-						exec1="sudo deluser $usr_from_db1 wheel"
+					"superuser_ubuntu"|"superuser_redhat")
+						exec1="sudo gpasswd -d $usr_from_db1 wheel"
 						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 						;;
 				esac
@@ -1847,7 +1940,7 @@ add_usr_on_dev () {
 		return 0
 	fi
 
-	local usr_pass=$(get_usr_pass $usr_from_db1)
+	local usr_pass=$(get_usr_pass $usr_from_db1 | sed -e 's/\$/\\$/g')
 	local usr_ssh_dir="/home/$usr_from_db1/.ssh"
 	local rsakey="$keys_repo/$usr_from_db1.id_rsa.pub"
 
@@ -1860,16 +1953,56 @@ add_usr_on_dev () {
 
 	for dev_role1 in $(get_dev_roles $dev_name1); do
 		case "$dev_role1" in
-			"busybox")
-				echo "Device armed with busybox utilities."
-				exec1="sudo adduser -D $usr_from_db1"
+			"orbit")
+				echo "Device armed with orbit utilities."
+				#first we have to lock checking files on orbit server
+				exec1="echo 1 > /tmp/check_files_lock"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+				exec1="sudo useradd -m $usr_from_db1 -p $usr_pass -s /bin/bash"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+				exec1="sudo mkdir -p $usr_ssh_dir"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+				if [ -e "$rsakey" ] ; then
+					local exec1="cat - | sudo tee $usr_ssh_dir/authorized_keys"
+					[ "$pretend" == 1 ] || cat "$rsakey" | ssh $sshopts $dev_name1 $exec1
+				else
+					echo "$rsakey not found in $keys_repo."
+				fi
+				exec1="sudo chown -R $usr_from_db1:$usr_from_db1 /home/$usr_from_db1"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+				#second we have to copy new files to non-volatile memory
+				exec1="sudo cp -p /etc/passwd /non-volatile/patch/etc/passwd"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+				exec1="sudo cp -p /etc/shadow /non-volatile/patch/etc/shadow"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+				exec1="sudo cp -p /etc/group /non-volatile/patch/etc/group"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+				exec1="sudo cp -rp /home/$usr_from_db1 /non-volatile/patch/home/"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+				#at last unlock checking files on orbit
+				exec1="echo 0 > /tmp/check_files_lock"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 				usr_added=1
 				break
 				;;
-			"ubuntu"|"rhel"|"debian")
-				echo "Device armed with ubuntu utilities."
-				exec1="sudo adduser $usr_from_db1"
+			"ubuntu"|"redhat")
+				echo "Device armed with linux utilities."
+				exec1="sudo useradd -m $usr_from_db1 -p $usr_pass -s /bin/bash"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+				exec1="sudo mkdir -p $usr_ssh_dir"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+				if [ -e "$rsakey" ] ; then
+					local exec1="cat - | sudo tee $usr_ssh_dir/authorized_keys"
+					[ "$pretend" == 1 ] || cat "$rsakey" | ssh $sshopts $dev_name1 $exec1
+				else
+					echo "$rsakey not found in $keys_repo."
+				fi
+				exec1="sudo chown -R $usr_from_db1:$usr_from_db1 /home/$usr_from_db1"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 				usr_added=1
 				break
@@ -1878,17 +2011,6 @@ add_usr_on_dev () {
 	done
 
 	[ "$usr_added" == 1 ] || return 0
-
-	exec1="sudo echo '$usr_from_db1:$usr_pass' | sudo chpasswd -e"
-	[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
-	exec1="sudo mkdir -p $usr_ssh_dir"
-	[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
-	if [ -e "$rsakey" ] ; then
-		local exec1="cat - | sudo tee $usr_ssh_dir/authorized_keys"
-		[ "$pretend" == 1 ] || cat "$rsakey" | ssh $sshopts $dev_name1 $exec1
-	else
-		echo "$rsakey not found in $keys_repo."
-	fi
 	
 	#here we get groups connected to dev through roles
 	#and then get roles list for the user-dev pair
@@ -1899,14 +2021,26 @@ add_usr_on_dev () {
 	for usr_role1 in $usr_rls1; do
 		for dev_role1 in $(get_dev_roles $dev_name1); do
 			case "${usr_role1}_${dev_role1}" in
-				"superuser_busybox")
-					echo "User $usr_from_db1 should be a su on $dev_name1 (busybox)."
-					exec1="sudo addgroup $usr_from_db1 wheel"
+				"superuser_orbit")
+					#first we have to lock checking files on orbit server
+					exec1="echo 1 > /tmp/check_files_lock"
+
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+					echo "User $usr_from_db1 should be a su on $dev_name1 (orbit)."
+					exec1="sudo usermod -G wheel $usr_from_db1"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+					#second we have to copy new files to non-volatile memory
+					exec1="sudo cp -p /etc/group /non-volatile/patch/etc/group"
+					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+					#at last unlock checking files on orbit
+					exec1="echo 0 > /tmp/check_files_lock"
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 					;;
-				"superuser_ubuntu")
-					echo "User $usr_from_db1 should be a su on $dev_name1 (ubuntu)."
-					exec1="sudo adduser $usr_from_db1 wheel"
+				"superuser_ubuntu"|"superuser_redhat")
+					echo "User $usr_from_db1 should be a su on $dev_name1 (ubuntu/redhat)."
+					exec1="sudo usermod -G wheel $usr_from_db1"
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 					;;
 			esac
@@ -1958,8 +2092,33 @@ rm_usr_on_dev () {
 	local exec1
 	for dev_role1 in $(get_dev_roles $dev_name1); do
 		case $dev_role1 in
-			"*")
-				exec1="sudo deluser $usr_to_rm1; sudo rm -r /home/$usr_to_rm1"
+			"orbit")
+				echo "Device armed with orbit utilities."
+				#first we have to lock checking files on orbit server
+				exec1="echo 1 > /tmp/check_files_lock"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+				exec1="sudo userdel -rf $usr_to_rm1"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+				#second we have to copy new files to non-volatile memory
+				exec1="sudo cp -p /etc/passwd /non-volatile/patch/etc/passwd"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+				exec1="sudo cp -p /etc/shadow /non-volatile/patch/etc/shadow"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+				exec1="sudo cp -p /etc/group /non-volatile/patch/etc/group"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+				exec1="sudo rm -r /non-volatile/patch/home/$usr_to_rm1"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+
+				#at last unlock checking files on orbit
+				exec1="echo 0 > /tmp/check_files_lock"
+				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
+				
+				break
+				;;
+			"ubuntu"|"redhat")
+				exec1="sudo userdel -rf $usr_to_rm1"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 				break
 				;;
