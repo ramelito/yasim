@@ -215,6 +215,7 @@ Device and user roles binding (with valid ns-id, dr-id and ur-id)
         --show-active-udr       show active device and user roles bindings
         --show-expired-udr      show expired device and user roles bindings
         --udr-id                device and user roles bind id (mandatory)
+        --udr-desc              device and user roles bind description (mandatory)
         --udr-btime             device and user roles binding begin of use time (optional)
         --udr-etime             device and user roles binding end of use time (optional)
         --udr-tsn-id            device and user roles transaction id to expire (mandatory)
@@ -297,15 +298,25 @@ check_keys_repo () {
 	[ "X$keys_repo" == "X" ] && echo 1 
 }
 
+get_next_id () {
+
+	local tname=$1
+	local iname=$2
+
+	local q="select $iname+1 from $tname"
+	q="$q order by $iname desc limit 1"
+	sqlite3 $sqlite3opts $db_file "$q"
+}
+
 #Namespace funcs
 
 add_ns () {
 
-	[ "X$ns_id" == "X" ] && exit 1
+	[ "X$ns_id" == "X" ] && ns_id=$(get_next_id namespaces ns_id)
 	[ "X$ns_name" == "X" ] && exit 1
 	[ "X$ns_desc" == "X" ] && exit 1
 	[ "X$ns_btime" == "X" ] && ns_btime=$(date "+%Y-%m-%d %H:%M:%S")
-	q="insert or rollback into namespaces (ns_id,ns_name,ns_desc,ns_btime)"
+	local q="insert or rollback into namespaces (ns_id,ns_name,ns_desc,ns_btime)"
 	q="$q values ($ns_id,'$ns_name','$ns_desc','$ns_btime');"
 	sqlite3 $sqlite3opts $db_file "$q"
 
@@ -350,7 +361,7 @@ show_expired_ns () {
 add_ur () {
 	
 	check_ns
-        [ "X$ur_id" == "X" ] && exit 1
+        [ "X$ur_id" == "X" ] && ur_id=$(get_next_id user_roles ur_id)
         [ "X$ur_name" == "X" ] && exit 1
         [ "X$ur_desc" == "X" ] && exit 1
         [ "X$ur_btime" == "X" ] && ur_btime=$(date "+%Y-%m-%d %H:%M:%S")
@@ -404,7 +415,7 @@ show_expired_ur () {
 add_ug () {
 
         check_ns
-        [ "X$ug_id" == "X" ] && exit 1
+        [ "X$ug_id" == "X" ] && ug_id=$(get_next_id user_groups ug_id)
         [ "X$ug_name" == "X" ] && exit 1
         [ "X$ug_desc" == "X" ] && exit 1
         [ "X$ug_btime" == "X" ] && ug_btime=$(date "+%Y-%m-%d %H:%M:%S")
@@ -459,7 +470,7 @@ show_expired_ug () {
 add_urg () {
 
         check_ns
-        [ "X$urg_id" == "X" ] && exit 1
+        [ "X$urg_id" == "X" ] && urg_id=$(get_next_id ur_ug_map urg_id)
 	[ "X$ur_id" == "X" ] && exit 1
 	[ "X$ug_id" == "X" ] && exit 1
         [ "X$urg_btime" == "X" ] && urg_btime=$(date "+%Y-%m-%d %H:%M:%S")
@@ -542,7 +553,7 @@ show_expired_urg () {
 add_usr () {
 
         check_ns
-        [ "X$usr_id" == "X" ] && exit 1
+        [ "X$usr_id" == "X" ] && usr_id=$(get_next_id users usr_id)
         [ "X$usr_name" == "X" ] && exit 1
         [ "X$usr_btime" == "X" ] && usr_btime=$(date "+%Y-%m-%d %H:%M:%S")
         q="insert or rollback into users (usr_id,usr_name,usr_btime,ns_id)"
@@ -662,7 +673,7 @@ show_expired_ui () {
 add_svc () {
 
         check_ns
-        [ "X$svc_id" == "X" ] && exit 1
+        [ "X$svc_id" == "X" ] && svc_id=$(get_next_id services svc_id)
         [ "X$svc_name" == "X" ] && exit 1
         [ "X$svc_desc" == "X" ] && exit 1
         [ "X$svc_btime" == "X" ] && svc_btime=$(date "+%Y-%m-%d %H:%M:%S")
@@ -793,7 +804,7 @@ show_expired_sup () {
 add_uug () {
 
         check_ns
-        [ "X$uug_id" == "X" ] && exit 1
+        [ "X$uug_id" == "X" ] && uug_id=$(get_next_id ug_usr_map uug_id)
         [ "X$usr_id" == "X" ] && exit 1
         [ "X$ug_id" == "X" ] && exit 1
         [ "X$uug_btime" == "X" ] && uug_btime=$(date "+%Y-%m-%d %H:%M:%S")
@@ -876,7 +887,7 @@ show_expired_uug () {
 add_dr () {
 
         check_ns
-        [ "X$dr_id" == "X" ] && exit 1
+        [ "X$dr_id" == "X" ] && dr_id=$(get_next_id device_roles dr_id)
         [ "X$dr_name" == "X" ] && exit 1
         [ "X$dr_desc" == "X" ] && exit 1
         [ "X$dr_btime" == "X" ] && dr_btime=$(date "+%Y-%m-%d %H:%M:%S")
@@ -930,7 +941,7 @@ show_expired_dr () {
 add_dg () {
 
         check_ns
-        [ "X$dg_id" == "X" ] && exit 1
+        [ "X$dg_id" == "X" ] && dg_id=$(get_next_id device_groups dg_id)
         [ "X$dg_name" == "X" ] && exit 1
         [ "X$dg_desc" == "X" ] && exit 1
         [ "X$dg_btime" == "X" ] && dg_btime=$(date "+%Y-%m-%d %H:%M:%S")
@@ -984,7 +995,7 @@ show_expired_dg () {
 add_dev () {
 
         check_ns
-        [ "X$dev_id" == "X" ] && exit 1
+        [ "X$dev_id" == "X" ] && dev_id=$(get_next_id devices dev_id)
         [ "X$dev_name" == "X" ] && exit 1
         [ "X$dev_desc" == "X" ] && exit 1
         [ "X$dev_btime" == "X" ] && dev_btime=$(date "+%Y-%m-%d %H:%M:%S")
@@ -1038,7 +1049,7 @@ show_expired_dev () {
 add_drg () {
 
         check_ns
-        [ "X$drg_id" == "X" ] && exit 1
+        [ "X$drg_id" == "X" ] && drg_id=$(get_next_id dr_dg_map drg_id)
         [ "X$dr_id" == "X" ] && exit 1
         [ "X$dg_id" == "X" ] && exit 1
         [ "X$drg_btime" == "X" ] && drg_btime=$(date "+%Y-%m-%d %H:%M:%S")
@@ -1121,7 +1132,7 @@ show_expired_drg () {
 add_ddg () {
 
         check_ns
-        [ "X$ddg_id" == "X" ] && exit 1
+        [ "X$ddg_id" == "X" ] && ddg_id=$(get_next_id dg_dev_map ddg_id)
         [ "X$dev_id" == "X" ] && exit 1
         [ "X$dg_id" == "X" ] && exit 1
         [ "X$ddg_btime" == "X" ] && ddg_btime=$(date "+%Y-%m-%d %H:%M:%S")
@@ -1204,7 +1215,7 @@ show_expired_ddg () {
 add_udr () {
 
         check_ns
-        [ "X$udr_id" == "X" ] && exit 1
+        [ "X$udr_id" == "X" ] && udr_id=$(get_next_id udr_map udr_id)
         [ "X$udr_desc" == "X" ] && exit 1
         [ "X$dr_id" == "X" ] && exit 1
         [ "X$ur_id" == "X" ] && exit 1
