@@ -125,7 +125,7 @@ Services (with valid ns-id)
         --svc-etime              service expire of use time (optional)
         --svc-tsn-id             service transaction id to expire (mandatory)
 
-Service user passwords (with valid ns-id and svc-id)
+Service user passwords (with valid ns-id and svc-id and usr-id)
         --add-sup                add new service user pass
         --expire-sup             expire existing service user pass
         --show-all-sup           show all service user passes
@@ -135,6 +135,17 @@ Service user passwords (with valid ns-id and svc-id)
         --sup-btime              service user pass begin of use time (optional)
         --sup-etime              service user pass expire of use time (optional)
         --sup-tsn-id             service user pass transaction id to expire (mandatory)
+
+Service user names (with valid ns-id and svc-id and usr-id)
+        --add-sun                add new service user name
+        --expire-sun             expire existing service user name
+        --show-all-sun           show all service user names
+        --show-active-sun        show active service user names
+        --show-expired-sun       show expired service user names
+        --sun                    service user name
+        --sun-btime              service user name begin of use time (optional)
+        --sun-etime              service user name expire of use time (optional)
+        --sun-tsn-id             service user name transaction id to expire (mandatory)
 
 User and group binding (with valid ns-id, usr-id and ug-id)
         --add-uug               add bind between user and group
@@ -797,6 +808,83 @@ show_expired_sup () {
 	q="$q and users.ns_id=$ns_id"
 	q="$q group by svc_upass.id"
         q="$q order by sup_exp.sup_etime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+#Service user names funcs
+
+add_sun () {
+
+        check_ns
+        [ "X$sun" == "X" ] && exit 1
+        [ "X$usr_id" == "X" ] && exit 1
+        [ "X$svc_id" == "X" ] && exit 1
+        [ "X$sun_btime" == "X" ] && sun_btime=$(date "+%Y-%m-%d %H:%M:%S")
+        local q="insert or rollback into svc_uname (sun,sun_btime,usr_id,svc_id,ns_id)"
+        q="$q values ('$sun','$sun_btime',$usr_id,$svc_id,$ns_id);"
+        sqlite3 $sqlite3opts $db_file "$q"
+
+}
+
+expire_sun () {
+
+        [ "X$sun_tsn_id" == "X" ] && exit 1
+        [ "X$sun_etime" == "X" ] && sun_etime=$(date "+%Y-%m-%d %H:%M:%S")
+        local q="insert or rollback into sun_exp (id,sun_etime) values ($sun_tsn_id,'$sun_etime');"
+        sqlite3 $sqlite3opts $db_file "$q"
+
+}
+
+show_all_sun () {
+
+        check_ns
+        local q="select svc_uname.*,services.svc_name, users.usr_name"
+	q="$q from svc_uname"
+	q="$q left join services on services.svc_id=svc_uname.svc_id"
+	q="$q left join users on users.usr_id=svc_uname.usr_id"
+	q="$q where svc_uname.ns_id=$ns_id"
+	q="$q and services.ns_id=$ns_id"
+	q="$q and users.ns_id=$ns_id"
+	q="$q group by svc_uname.id"
+	q="$q order by svc_uname.sun_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_active_sun () {
+
+        check_ns
+        local q="select svc_uname.*, services.svc_name, users.usr_name"
+	q="$q from svc_uname"
+	q="$q left join services on services.svc_id=svc_uname.svc_id"
+	q="$q left join users on users.usr_id=svc_uname.usr_id"
+        q="$q where svc_uname.id not in (select id from sun_exp)"
+        q="$q and services.id not in (select id from svc_exp)"
+        q="$q and users.id not in (select id from usr_exp)"
+        q="$q and svc_uname.sun_btime < datetime('now','localtime')"
+        q="$q and services.svc_btime < datetime('now','localtime')"
+        q="$q and users.usr_btime < datetime('now','localtime')"
+        q="$q and svc_uname.ns_id=$ns_id"
+	q="$q and services.ns_id=$ns_id"
+	q="$q and users.ns_id=$ns_id"
+        q="$q order by svc_uname.sun_btime desc"
+        sqlite3 $sqlite3opts $db_file "$q"
+}
+
+show_expired_sun () {
+
+        check_ns
+        local q="select svc_uname.*, sun_exp.sun_etime, services.svc_name,"
+	q="$q users.usr_name"
+	q="$q from svc_uname"
+	q="$q inner join sun_exp on sun_exp.id=svc_uname.id"
+	q="$q left join services on services.svc_id=svc_uname.svc_id"
+	q="$q left join users on users.usr_id=svc_uname.usr_id"
+        q="$q where sun_exp.sun_etime < datetime('now','localtime')"
+        q="$q and svc_uname.ns_id=$ns_id"
+	q="$q and services.ns_id=$ns_id"
+	q="$q and users.ns_id=$ns_id"
+	q="$q group by svc_uname.id"
+        q="$q order by sun_exp.sun_etime desc"
         sqlite3 $sqlite3opts $db_file "$q"
 }
 #User and group binding funcs
@@ -1600,6 +1688,7 @@ get_usr_pass () {
 
         check_ns
 	test "X$1" == "X" && exit 1 || local usr_from_db1=$1
+	test "X$2" == "X" && exit 1 || local svc_name=$2
 
         local q="select sup_enc from svc_upass"
 	q="$q left join services on services.svc_id=svc_upass.svc_id"
@@ -1613,7 +1702,31 @@ get_usr_pass () {
         q="$q and svc_upass.ns_id=$ns_id"
         q="$q and services.ns_id=$ns_id"
         q="$q and users.ns_id=$ns_id"
-	q="$q and services.svc_name='ssh'"
+	q="$q and services.svc_name='$svc_name'"
+	q="$q and users.usr_name='$usr_from_db1'"
+	q="$q limit 1"
+        sqlite3 $db_file "$q"
+}
+
+get_usr_name () {
+
+        check_ns
+	test "X$1" == "X" && exit 1 || local usr_from_db1=$1
+	test "X$2" == "X" && exit 1 || local svc_name=$2
+
+        local q="select sun from svc_uname"
+	q="$q left join services on services.svc_id=svc_uname.svc_id"
+	q="$q left join users on users.usr_id=svc_uname.usr_id"
+        q="$q where svc_uname.id not in (select id from sun_exp)"
+	q="$q and services.id not in (select id from svc_exp)"
+	q="$q and users.id not in (select id from usr_exp)"
+        q="$q and svc_uname.sun_btime < datetime('now','localtime')"
+        q="$q and services.svc_btime < datetime('now','localtime')"
+        q="$q and users.usr_btime < datetime('now','localtime')"
+        q="$q and svc_uname.ns_id=$ns_id"
+        q="$q and services.ns_id=$ns_id"
+        q="$q and users.ns_id=$ns_id"
+	q="$q and services.svc_name='$svc_name'"
 	q="$q and users.usr_name='$usr_from_db1'"
 	q="$q limit 1"
         sqlite3 $db_file "$q"
@@ -1708,12 +1821,15 @@ chk_rsa () {
 
 	local exec1
 	local dev_role1
+	local ssh_uname1
+
+	ssh_uname1=$(get_usr_name $usr_from_db1 ssh)
 
 	#check rsa_key
 	local rsakey="$keys_repo/$usr_from_db1.id_rsa.pub"
 	if [ -e "$rsakey" ] ; then
 		local rk_from_svr=$(mktemp)
-		local usr_ssh_dir="/home/$usr_from_db1/.ssh"
+		local usr_ssh_dir="/home/$ssh_uname1/.ssh"
 		ssh $sshopts $dev_name1 "sudo mkdir -p $usr_ssh_dir"
 		ssh $sshopts $dev_name1 "sudo cat $usr_ssh_dir/authorized_keys" > $rk_from_svr
 		if diff $rsakey $rk_from_svr >/dev/null ; then
@@ -1723,13 +1839,13 @@ chk_rsa () {
 			local exec1="cat - | sudo tee $usr_ssh_dir/authorized_keys"
 			[ "$pretend" == 1 ] || cat "$rsakey" | ssh $sshopts $dev_name1 $exec1
 		fi
-		exec1="sudo chown -R $usr_from_db1:$usr_from_db1 /home/$usr_from_db1"
+		exec1="sudo chown -R $ssh_uname1:$ssh_uname1 /home/$ssh_uname1"
 		[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 		rm $rk_from_svr
 		for dev_role1 in $(get_dev_roles $dev_name1); do
 			case $dev_role1 in
 				"orbit")
-					exec1="sudo cp -rp /home/$usr_from_db1 /non-volatile/patch/home/$usr_from_db1"
+					exec1="sudo cp -rp /home/$ssh_uname1 /non-volatile/patch/home/$ssh_uname1"
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 					;;
 			esac
@@ -1748,9 +1864,12 @@ chk_shell () {
 
 	local exec1
 	local dev_role1
+	local ssh_uname1
+
+	ssh_uname1=$(get_usr_name $usr_from_db1 ssh)
 
 	#check shell
-	local exec1="cat /etc/passwd | grep -w $usr_from_db1 | cut -d: -f7"
+	local exec1="cat /etc/passwd | grep -w $ssh_uname1 | cut -d: -f7"
 	local usr_shell=$(ssh $sshopts $dev_name1 $exec1)
 
 	if [ "$usr_shell" == "/bin/sh" -o "$usr_shell" == "/bin/bash" ]; then
@@ -1765,7 +1884,7 @@ chk_shell () {
 					exec1="echo 1 > /tmp/check_files_lock"
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 
-					exec1="sudo usermod -s /bin/bash $usr_from_db1"
+					exec1="sudo usermod -s /bin/bash $ssh_uname1"
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 
 					#second we have to copy new files to non-volatile memory
@@ -1779,7 +1898,7 @@ chk_shell () {
 					;;
 				"ubuntu"|"redhat")
 					echo "Device armed with ubuntu/redhat utilities."
-					exec1="sudo usermod -s /bin/bash $usr_from_db1"
+					exec1="sudo usermod -s /bin/bash $ssh_uname1"
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 					break
 					;;
@@ -1800,11 +1919,13 @@ chk_pass () {
 	local dev_role1
 	local usr_pass_on_svr
 	local usr_pass_from_db
+	local ssh_uname1
 
 	#check password (look at shadow file)
-	exec1="sudo cat /etc/shadow | grep -w $usr_from_db1 | cut -d: -f2"
+	ssh_uname1=$(get_usr_pass $usr_from_db1 ssh)	
+	exec1="sudo cat /etc/shadow | grep -w $ssh_uname1 | cut -d: -f2"
 	usr_pass_on_svr=$(ssh $sshopts $dev_name1 $exec1)
-	usr_pass_from_db=$(get_usr_pass $usr_from_db1)
+	usr_pass_from_db=$(get_usr_pass $usr_from_db1 ssh)
 	if [ "$usr_pass_on_svr" == "$usr_pass_from_db" ]; then
 		echo "User $usr_from_db1 password is ok."
 	else
@@ -1816,7 +1937,7 @@ chk_pass () {
 					exec1="echo 1 > /tmp/check_files_lock"
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 
-					exec1="sudo usermod -p $usr_pass_from_db $usr_from_db1"
+					exec1="sudo usermod -p $usr_pass_from_db $ssh_uname1"
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 					
 					exec1="sudo cp -p /etc/shadow /non-volatile/patch/etc/shadow"
@@ -1829,7 +1950,7 @@ chk_pass () {
 					break
 					;;
 				"ubuntu"|"redhat")
-					exec1="sudo usermod -p $usr_pass_from_db $usr_from_db1"
+					exec1="sudo usermod -p $usr_pass_from_db $ssh_uname1"
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 					break
 					;;
@@ -1849,6 +1970,9 @@ chk_su () {
 	local dev_role1
 	local usr_grp1
 	local usr_roles1
+	local ssh_uname1
+
+	ssh_uname1=$(get_usr_name $usr_from_db1 ssh)
 
 	#here we get groups connected to dev through roles
 	#and then get roles list for the user-dev pair
@@ -1859,7 +1983,7 @@ chk_su () {
 	#check superuser ability
 	[ "$(grep -wc superuser <<< $usr_rls1)" == 1 ]  && is_dsu1=1 || is_dsu1=0
 
-	exec1="sudo cat /etc/group | grep -w wheel | grep -wc $usr_from_db1"
+	exec1="sudo cat /etc/group | grep -w wheel | grep -wc $ssh_uname1"
 	[ "$(ssh $sshopts $dev_name1 $exec1)" == 1 ] && is_ssu1=1 || is_ssu1=0
 
 	if [ "$is_dsu1" == 1 -a "$is_dsu1" != "$is_ssu1" ]; then
@@ -1872,7 +1996,7 @@ chk_su () {
 						exec1="echo 1 > /tmp/check_files_lock"
 
 						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
-						exec1="sudo usermod -G wheel $usr_from_db1"
+						exec1="sudo usermod -G wheel $ssh_uname1"
 						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 
 						#second we have to copy new files to non-volatile memory
@@ -1884,7 +2008,7 @@ chk_su () {
 						
 						;;
 					"superuser_ubuntu"|"superuser_redhat")
-						exec1="sudo usermod -G wheel $usr_from_db1"
+						exec1="sudo usermod -G wheel $ssh_uname1"
 						echo $exec1
 						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 						;;
@@ -1903,7 +2027,7 @@ chk_su () {
 						exec1="echo 1 > /tmp/check_files_lock"
 						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 
-						exec1="sudo gpasswd -d $usr_from_db1 wheel"
+						exec1="sudo gpasswd -d $ssh_uname1 wheel"
 						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 
 						#second we have to copy new files to non-volatile memory
@@ -1914,7 +2038,7 @@ chk_su () {
 						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 						;;
 					"superuser_ubuntu"|"superuser_redhat")
-						exec1="sudo gpasswd -d $usr_from_db1 wheel"
+						exec1="sudo gpasswd -d $ssh_uname1 wheel"
 						[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 						;;
 				esac
@@ -1941,19 +2065,6 @@ add_usr_on_dev () {
 
 	test "X$1" == "X" && exit 1 || local dev_name1=$1
 	test "X$2" == "X" && exit 1 || local usr_from_db1=$2
-	
-	echo "Check if user $usr_from_db1 exists on $dev_name1."
-	local exec1="cat /etc/passwd | grep -wc $usr_from_db1"
-	local usr_exists=$(ssh $sshopts $dev_name1 $exec1)
-	if [ $usr_exists -eq 1 ]; then
-		echo "User exists!"
-		chk_usr_on_dev $dev_name1 $usr_from_db1
-		return 0
-	fi
-
-	local usr_pass=$(get_usr_pass $usr_from_db1 | sed -e 's/\$/\\$/g')
-	local usr_ssh_dir="/home/$usr_from_db1/.ssh"
-	local rsakey="$keys_repo/$usr_from_db1.id_rsa.pub"
 
 	local dev_role1
 	local usr_grp1
@@ -1961,6 +2072,21 @@ add_usr_on_dev () {
 	local usr_role1
 	local usr_added=0
 	local exec1
+	local ssh_uname1
+
+	ssh_uname1=$(get_usr_name $usr_from_db1 ssh)	
+	echo "Check if user $usr_from_db1 exists on $dev_name1."
+	local exec1="cat /etc/passwd | grep -wc $ssh_uname1"
+	local usr_exists=$(ssh $sshopts $dev_name1 $exec1)
+	if [ $usr_exists -eq 1 ]; then
+		echo "User exists!"
+		chk_usr_on_dev $dev_name1 $usr_from_db1
+		return 0
+	fi
+
+	local usr_pass=$(get_usr_pass $usr_from_db1 ssh | sed -e 's/\$/\\$/g')
+	local usr_ssh_dir="/home/$ssh_uname1/.ssh"
+	local rsakey="$keys_repo/$usr_from_db1.id_rsa.pub"
 
 	for dev_role1 in $(get_dev_roles $dev_name1); do
 		case "$dev_role1" in
@@ -1970,7 +2096,7 @@ add_usr_on_dev () {
 				exec1="echo 1 > /tmp/check_files_lock"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 
-				exec1="sudo useradd -m $usr_from_db1 -p $usr_pass -s /bin/bash"
+				exec1="sudo useradd -m $ssh_uname1 -p $usr_pass -s /bin/bash"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 				exec1="sudo mkdir -p $usr_ssh_dir"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
@@ -1981,7 +2107,7 @@ add_usr_on_dev () {
 				else
 					echo "$rsakey not found in $keys_repo."
 				fi
-				exec1="sudo chown -R $usr_from_db1:$usr_from_db1 /home/$usr_from_db1"
+				exec1="sudo chown -R $ssh_uname1:$ssh_uname1 /home/$ssh_uname1"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 
 				#second we have to copy new files to non-volatile memory
@@ -1991,7 +2117,7 @@ add_usr_on_dev () {
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 				exec1="sudo cp -p /etc/group /non-volatile/patch/etc/group"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
-				exec1="sudo cp -rp /home/$usr_from_db1 /non-volatile/patch/home/"
+				exec1="sudo cp -rp /home/$ssh_uname1 /non-volatile/patch/home/"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 
 				#at last unlock checking files on orbit
@@ -2002,7 +2128,7 @@ add_usr_on_dev () {
 				;;
 			"ubuntu"|"redhat")
 				echo "Device armed with linux utilities."
-				exec1="sudo useradd -m $usr_from_db1 -p $usr_pass -s /bin/bash"
+				exec1="sudo useradd -m $ssh_uname1 -p $usr_pass -s /bin/bash"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 				exec1="sudo mkdir -p $usr_ssh_dir"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
@@ -2013,7 +2139,7 @@ add_usr_on_dev () {
 				else
 					echo "$rsakey not found in $keys_repo."
 				fi
-				exec1="sudo chown -R $usr_from_db1:$usr_from_db1 /home/$usr_from_db1"
+				exec1="sudo chown -R $ssh_uname1:$ssh_uname1 /home/$ssh_uname1"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 				usr_added=1
 				break
@@ -2038,7 +2164,7 @@ add_usr_on_dev () {
 
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 					echo "User $usr_from_db1 should be a su on $dev_name1 (orbit)."
-					exec1="sudo usermod -G wheel $usr_from_db1"
+					exec1="sudo usermod -G wheel $ssh_uname1"
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 
 					#second we have to copy new files to non-volatile memory
@@ -2051,7 +2177,7 @@ add_usr_on_dev () {
 					;;
 				"superuser_ubuntu"|"superuser_redhat")
 					echo "User $usr_from_db1 should be a su on $dev_name1 (ubuntu/redhat)."
-					exec1="sudo usermod -G wheel $usr_from_db1"
+					exec1="sudo usermod -G wheel $ssh_uname1"
 					[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 					;;
 			esac
@@ -2101,6 +2227,10 @@ rm_usr_on_dev () {
 
 	local dev_role1
 	local exec1
+	local ssh_uname1
+	
+	ssh_uname1=$(get_usr_name $usr_to_rm1 ssh)
+
 	for dev_role1 in $(get_dev_roles $dev_name1); do
 		case $dev_role1 in
 			"orbit")
@@ -2109,7 +2239,7 @@ rm_usr_on_dev () {
 				exec1="echo 1 > /tmp/check_files_lock"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 
-				exec1="sudo userdel -rf $usr_to_rm1"
+				exec1="sudo userdel -rf $ssh_uname1"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 
 				#second we have to copy new files to non-volatile memory
@@ -2119,7 +2249,7 @@ rm_usr_on_dev () {
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 				exec1="sudo cp -p /etc/group /non-volatile/patch/etc/group"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
-				exec1="sudo rm -r /non-volatile/patch/home/$usr_to_rm1"
+				exec1="sudo rm -r /non-volatile/patch/home/$ssh_uname1"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 
 				#at last unlock checking files on orbit
@@ -2129,7 +2259,7 @@ rm_usr_on_dev () {
 				break
 				;;
 			"ubuntu"|"redhat")
-				exec1="sudo userdel -rf $usr_to_rm1"
+				exec1="sudo userdel -rf $ssh_uname1"
 				[ "$pretend" == 1 ] || ssh $sshopts $dev_name1 $exec1
 				break
 				;;
@@ -2145,7 +2275,11 @@ rm_usrs_on_dev () {
 	#get list of users from db
 	echo "Get user list for $dev_name1 from db."
 	local usrs_from_db1=$(mktemp)
-	get_dev_uns $dev_name1 > $usrs_from_db1
+	local usr_from_db1
+	
+	for usr_from_db1 in $(get_dev_uns $dev_name1); do
+		get_usr_name $usr_from_db1 ssh
+	done > $usrs_from_db1
 
 	#sedding retrieved passwd with known user list (root, daemon, etc...)
 	usrs_from_svr1=$(mktemp)
@@ -2264,6 +2398,10 @@ longopts="$longopts,svc-id:,svc-name:,svc-desc:,svc-btime:,svc-etime:,svc-tsn-id
 #services passes for users
 longopts="$longopts,add-sup,expire-sup,show-all-sup,show-active-sup,show-expired-sup"
 longopts="$longopts,sup-enc:,sup-btime:,sup-etime:,sup-tsn-id:"
+
+#services usernames for users
+longopts="$longopts,add-sun,expire-sun,show-all-sun,show-active-sun,show-expired-sun"
+longopts="$longopts,sun:,sun-btime:,sun-etime:,sun-tsn-id:"
 
 #user and group bind keys
 longopts="$longopts,add-uug,expire-uug,show-all-uug,show-active-uug,show-expired-uug"
@@ -2401,6 +2539,15 @@ while true ; do
                 --show-all-sup) show_all_sup=1; shift;;
                 --show-active-sup) show_active_sup=1; shift;;
                 --show-expired-sup) show_expired_sup=1; shift;;
+		--sun) sun=$2; shift 2;;
+                --sun-btime) sun_btime=$2; shift 2;;
+                --sun-etime) sun_etime=$2; shift 2;;
+                --sun-tsn-id) sun_tsn_id=$2; shift 2;;
+                --add-sun) add_sun=1; shift;;
+                --expire-sun) expire_sun=1; shift;;
+                --show-all-sun) show_all_sun=1; shift;;
+                --show-active-sun) show_active_sun=1; shift;;
+                --show-expired-sun) show_expired_sun=1; shift;;
                 --uug-id) uug_id=$2; shift 2;;
                 --uug-btime) uug_btime=$2; shift 2;;
                 --uug-etime) uug_etime=$2; shift 2;;
@@ -2585,6 +2732,18 @@ chk_sw
 [ "$show_active_sup" == 1 ] && show_active_sup
 
 [ "$show_expired_sup" == 1 ] && show_expired_sup
+
+#Service user names block
+
+[ "$add_sun" == 1 ] && add_sun
+
+[ "$expire_sun" == 1 ] && expire_sun
+
+[ "$show_all_sun" == 1 ] && show_all_sun
+
+[ "$show_active_sun" == 1 ] && show_active_sun
+
+[ "$show_expired_sun" == 1 ] && show_expired_sun
 
 #User and group binding block
 

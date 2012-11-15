@@ -98,6 +98,20 @@ sup_etime DATETIME NOT NULL,
 id REFERENCES svc_upass (id)
 );
 
+CREATE TABLE IF NOT EXISTS svc_uname (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+sun VARCHAR( 255 )  NOT NULL,
+sun_btime DATETIME NOT NULL,
+svc_id REFERENCES services (svc_id),
+usr_id REFERENCES users (usr_id),
+ns_id REFERENCES namespaces (ns_id)
+);
+
+CREATE TABLE IF NOT EXISTS sup_exp (
+sup_etime DATETIME NOT NULL,
+id REFERENCES svc_upass (id)
+);
+
 CREATE TABLE IF NOT EXISTS ur_ug_map (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
 urg_id INTEGER NOT NULL,
