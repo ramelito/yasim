@@ -107,9 +107,9 @@ usr_id REFERENCES users (usr_id),
 ns_id REFERENCES namespaces (ns_id)
 );
 
-CREATE TABLE IF NOT EXISTS sup_exp (
-sup_etime DATETIME NOT NULL,
-id REFERENCES svc_upass (id)
+CREATE TABLE IF NOT EXISTS sun_exp (
+sun_etime DATETIME NOT NULL,
+id REFERENCES svc_uname (id)
 );
 
 CREATE TABLE IF NOT EXISTS ur_ug_map (
